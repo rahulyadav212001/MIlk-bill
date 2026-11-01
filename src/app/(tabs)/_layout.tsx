@@ -55,6 +55,15 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="summary"
+        options={{
+          title: 'Summary',
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="chart-box-outline" size={size} color={color as any} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }

@@ -53,6 +53,7 @@ import {
   Supplier,
 } from '../../types';
 import { formatDateDayMonth, formatDisplayDate, getTodayKolkata } from '../../utils/date';
+import { makePhoneCall } from '../../utils/phone';
 
 export default function BuyScreen() {
   const [selectedDate, setSelectedDate] = useState<string>(getTodayKolkata());
@@ -430,7 +431,13 @@ export default function BuyScreen() {
               </View>
               <View style={styles.nameInfo}>
                 <Text style={styles.supplierName}>{item.name}</Text>
-                <Text style={styles.phoneText}>📞 {item.phone}</Text>
+                <TouchableOpacity
+                  onPress={() => makePhoneCall(item.phone)}
+                  activeOpacity={0.7}
+                  hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+                >
+                  <Text style={styles.phoneText}>📞 {item.phone}</Text>
+                </TouchableOpacity>
               </View>
             </View>
 
@@ -1358,7 +1365,8 @@ const styles = StyleSheet.create({
   },
   phoneText: {
     fontSize: 13,
-    color: BrandColors.neutralGray,
+    color: BrandColors.primaryDark,
+    fontWeight: '600',
     marginTop: 2,
   },
   statusRow: {

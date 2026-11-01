@@ -29,7 +29,11 @@ import {
 } from '../../utils/date';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 
-export default function DailySupplySummaryScreen() {
+interface DailySupplySummaryScreenProps {
+  hideBackButton?: boolean;
+}
+
+export default function DailySupplySummaryScreen({ hideBackButton = false }: DailySupplySummaryScreenProps = {}) {
   const params = useLocalSearchParams<{ date?: string }>();
 
   // Date selection state
@@ -230,7 +234,7 @@ export default function DailySupplySummaryScreen() {
       <HeaderBar
         title="Daily Supply Summary"
         subtitle="Daily Comparison • Stock & P/L"
-        showBack
+        showBack={!hideBackButton}
       />
 
       <ScrollView
