@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   StyleSheet,
   View,
@@ -64,7 +64,6 @@ import {
   getTodayKolkata,
   formatDisplayDate,
   addDays,
-  getDaysDifference,
   getMonthName,
 } from '../../utils/date';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -92,10 +91,12 @@ export default function CustomersScreen() {
   const [custLocation, setCustLocation] = useState('');
   const [custMilkCategory, setCustMilkCategory] = useState<MilkCategory>('buffalo');
   const [custStartDate, setCustStartDate] = useState(getTodayKolkata());
+  const [custQuantityStr, setCustQuantityStr] = useState('1');
   const [custPriceStr, setCustPriceStr] = useState('30');
   const [custDeliveryTime, setCustDeliveryTime] = useState<MilkDeliveryTime>('morning');
   const [savingCust, setSavingCust] = useState(false);
   const [custError, setCustError] = useState('');
+  const addCustScrollRef = useRef<any>(null);
 
   // Direct Quantity Edit Modal
   const [qtyModalVisible, setQtyModalVisible] = useState(false);
@@ -147,10 +148,10 @@ export default function CustomersScreen() {
   const [loadingCustomCustHistory, setLoadingCustomCustHistory] = useState(false);
   const [expandedCustomCustomers, setExpandedCustomCustomers] = useState<Set<string>>(new Set());
 
-  // Calendar Date Picker Modal for customer history & main screen
+  // Calendar Date Picker Modal for customer history, main screen & registration
   const [calendarPickerVisible, setCalendarPickerVisible] = useState(false);
   const [calendarTargetField, setCalendarTargetField] = useState<
-    'main' | 'history_daily' | 'custom_start' | 'custom_end'
+    'main' | 'history_daily' | 'custom_start' | 'custom_end' | 'cust_reg'
   >('main');
 
   // PDF generation loading
@@ -203,6 +204,7 @@ export default function CustomersScreen() {
     setCustLocation('');
     setCustMilkCategory('buffalo');
     setCustStartDate(getTodayKolkata());
+    setCustQuantityStr('1');
     setCustPriceStr('30');
     setCustDeliveryTime('morning');
     setCustError('');
@@ -216,6 +218,11 @@ export default function CustomersScreen() {
     setCustLocation(cust.location || '');
     setCustMilkCategory(cust.milkCategory || 'buffalo');
     setCustStartDate(cust.deliveryStartDate || getTodayKolkata());
+    setCustQuantityStr(
+      cust.defaultDailyQuantity != null && cust.defaultDailyQuantity > 0
+        ? cust.defaultDailyQuantity.toString()
+        : '1'
+    );
     setCustPriceStr(cust.pricePerLiter.toString());
     setCustDeliveryTime(cust.deliveryTime === 'evening' ? 'evening' : 'morning');
     setCustError('');
@@ -268,6 +275,11 @@ export default function CustomersScreen() {
       setCustError('Please enter a valid start date (YYYY-MM-DD).');
       return;
     }
+    const newCustQty = parseFloat(custQuantityStr);
+    if (isNaN(newCustQty) || newCustQty <= 0) {
+      setCustError('How Many Litres of Milk must be greater than 0 (e.g. 1.5 Litres).');
+      return;
+    }
     const newCustPrice = parseFloat(custPriceStr) || 0;
     if (newCustPrice <= 0) {
       setCustError('Milk price per liter must be greater than ₹0.');
@@ -285,6 +297,7 @@ export default function CustomersScreen() {
           location: cleanLocation,
           milkCategory: custMilkCategory,
           pricePerLiter: newCustPrice,
+          defaultDailyQuantity: newCustQty,
           deliveryTime: custDeliveryTime,
           deliveryStartDate: cleanStartDate,
         });
@@ -295,9 +308,9 @@ export default function CustomersScreen() {
           location: cleanLocation,
           milkCategory: custMilkCategory,
           pricePerLiter: newCustPrice,
+          defaultDailyQuantity: newCustQty,
           deliveryTime: custDeliveryTime,
           deliveryStartDate: cleanStartDate,
-          defaultDailyQuantity: 0,
         });
       }
 
@@ -313,31 +326,6 @@ export default function CustomersScreen() {
   // --- Daily Quantity Editing Handlers ---
   const getDeliveryForCustomer = (customerId: string): Delivery | undefined => {
     return deliveries.find((d) => d.customerId === customerId);
-  };
-
-  const handleAdjustQuantity = async (cust: Customer, delta: number) => {
-    const existing = getDeliveryForCustomer(cust.id);
-    if (existing?.status === 'customer_holiday' || existing?.status === 'supplier_holiday') {
-      Alert.alert('Notice', 'Cannot adjust milk quantity while customer is on holiday.');
-      return;
-    }
-    const currentQty = existing ? existing.actualQuantity : cust.defaultDailyQuantity;
-    const nextQty = Math.max(0, Number((currentQty + delta).toFixed(2)));
-
-    try {
-      const updated = await updateDeliveryQuantity(
-        cust.id,
-        selectedDate,
-        nextQty,
-        cust.name,
-        cust.pricePerLiter
-      );
-      setDeliveries((prev) =>
-        prev.map((d) => (d.customerId === cust.id ? updated : d))
-      );
-    } catch (err: any) {
-      Alert.alert('Error', err?.message || 'Failed to update quantity.');
-    }
   };
 
   const handleOpenCustomQty = (cust: Customer) => {
@@ -596,6 +584,9 @@ export default function CustomersScreen() {
         setCustCustomStartDate(newDate);
       }
       loadCustomCustomerHistory(start, newDate);
+    } else if (calendarTargetField === 'cust_reg') {
+      setCustStartDate(newDate);
+      setCustError('');
     }
   };
 
@@ -627,6 +618,50 @@ export default function CustomersScreen() {
       c.phone.includes(searchQuery.trim()) ||
       (c.location && c.location.toLowerCase().includes(searchQuery.toLowerCase()))
   );
+
+  // Dynamically calculate total customer milk for the selected date
+  const customerMilkSummary = useMemo(() => {
+    let cowLitres = 0;
+    let buffaloLitres = 0;
+    const handledCustIds = new Set<string>();
+
+    customers.forEach((cust) => {
+      handledCustIds.add(cust.id);
+      const del = deliveries.find((d) => d.customerId === cust.id);
+      const isCustHoliday = del?.status === 'customer_holiday';
+      const isSupHoliday = del?.status === 'supplier_holiday' || supplierHolidayActive;
+
+      let qty = 0;
+      if (isCustHoliday || isSupHoliday) {
+        qty = 0;
+      } else if (del) {
+        qty = Number(del.actualQuantity) || 0;
+      } else {
+        qty = Number(cust.defaultDailyQuantity) || 0;
+      }
+
+      if (cust.milkCategory === 'cow') {
+        cowLitres += qty;
+      } else {
+        buffaloLitres += qty;
+      }
+    });
+
+    deliveries.forEach((del) => {
+      if (handledCustIds.has(del.customerId)) return;
+      const isCustHoliday = del.status === 'customer_holiday';
+      const isSupHoliday = del.status === 'supplier_holiday' || supplierHolidayActive;
+      if (isCustHoliday || isSupHoliday) return;
+      const qty = Number(del.actualQuantity) || 0;
+      buffaloLitres += qty;
+    });
+
+    return {
+      cow: Number(cowLitres.toFixed(2)),
+      buffalo: Number(buffaloLitres.toFixed(2)),
+      total: Number((cowLitres + buffaloLitres).toFixed(2)),
+    };
+  }, [customers, deliveries, supplierHolidayActive]);
 
   const renderCustomerItem = ({ item }: { item: Customer }) => {
     const del = getDeliveryForCustomer(item.id);
@@ -700,22 +735,11 @@ export default function CustomersScreen() {
               </Text>
             </View>
 
-            {/* Line 2: Rate & Delivery Time directly below default */}
+            {/* Line 2: Rate directly below default */}
             <View style={styles.specLine}>
               <Text style={styles.specText}>
                 Rate:{' '}
                 <Text style={styles.boldText}>₹{item.pricePerLiter}/L</Text>
-              </Text>
-              <Text style={styles.specSeparator}>•</Text>
-              <Text style={styles.specText}>
-                Time:{' '}
-                <Text style={styles.boldText}>
-                  {item.deliveryTime === 'evening'
-                    ? '🌇 Evening'
-                    : item.deliveryTime === 'afternoon'
-                    ? '☀️ Afternoon'
-                    : '🌅 Morning'}
-                </Text>
               </Text>
             </View>
           </View>
@@ -756,52 +780,7 @@ export default function CustomersScreen() {
               </TouchableOpacity>
             </View>
 
-            {/* Quick Adjust Buttons (hidden or disabled if on holiday) */}
-            {!(isCustomerHoliday || isSupHoliday) ? (
-              <View style={styles.adjustCol}>
-                <View style={styles.adjustBtnRow}>
-                  <Button
-                    mode="outlined"
-                    compact
-                    onPress={() => handleAdjustQuantity(item, -0.5)}
-                    style={styles.adjustBtn}
-                    textColor={BrandColors.danger}
-                  >
-                    -0.5L
-                  </Button>
-                  <Button
-                    mode="outlined"
-                    compact
-                    onPress={() => handleAdjustQuantity(item, 0.5)}
-                    style={styles.adjustBtn}
-                    textColor={BrandColors.success}
-                  >
-                    +0.5L
-                  </Button>
-                </View>
-
-                <View style={styles.adjustBtnRow}>
-                  <Button
-                    mode="outlined"
-                    compact
-                    onPress={() => handleAdjustQuantity(item, -1)}
-                    style={styles.adjustBtn}
-                    textColor={BrandColors.danger}
-                  >
-                    -1L
-                  </Button>
-                  <Button
-                    mode="outlined"
-                    compact
-                    onPress={() => handleAdjustQuantity(item, 1)}
-                    style={styles.adjustBtn}
-                    textColor={BrandColors.success}
-                  >
-                    +1L
-                  </Button>
-                </View>
-              </View>
-            ) : (
+            {(isCustomerHoliday || isSupHoliday) && (
               <View style={styles.holidayBadgeContainer}>
                 <View
                   style={[
@@ -943,27 +922,101 @@ export default function CustomersScreen() {
         </View>
       )}
 
-      {/* Date Switcher Bar */}
-      <Card style={styles.dateSelectorCard}>
-        <Card.Content style={styles.dateSelectorRow}>
-          <IconButton icon="chevron-left" onPress={() => handleDateChange(-1)} />
-          <TouchableOpacity
-            style={styles.dateCenter}
-            onPress={() => {
-              setCalendarTargetField('main');
-              setCalendarPickerVisible(true);
-            }}
-          >
-            <Text style={styles.dateLabel}>Delivery Date (Tap to pick)</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-              <MaterialCommunityIcons name="calendar" size={16} color={BrandColors.primaryDark} />
-              <Text style={styles.dateValue}>{formatDisplayDate(selectedDate)}</Text>
-              <MaterialCommunityIcons name="chevron-down" size={14} color={BrandColors.neutralGray} />
-            </View>
-          </TouchableOpacity>
-          <IconButton icon="chevron-right" onPress={() => handleDateChange(1)} />
-        </Card.Content>
-      </Card>
+      {/* Customer Dashboard: Box 1 (Total Customer Milk) & Box 2 (Calendar / Date Selector) */}
+      <View style={styles.dashboardContainer}>
+        {/* Box 1: Total Customer Milk */}
+        <View style={styles.dashboardBox}>
+          <View style={styles.dashHeaderRow}>
+            <MaterialCommunityIcons name="water-percent" size={18} color={BrandColors.primary} />
+            <Text style={styles.dashBoxTitle} numberOfLines={1}>
+              Total Customer Milk
+            </Text>
+          </View>
+          <View style={styles.dashTotalValueRow}>
+            <Text style={styles.dashTotalValue}>{customerMilkSummary.total}</Text>
+            <Text style={styles.dashTotalUnit}>Litres</Text>
+          </View>
+          <View style={styles.dashBreakdownRow}>
+            <Text style={styles.dashBreakdownBadge} numberOfLines={1}>
+              🐄 Cow: <Text style={styles.boldText}>{customerMilkSummary.cow} L</Text>
+            </Text>
+            <Text style={styles.dashBreakdownBadge} numberOfLines={1}>
+              🐃 Buffalo: <Text style={styles.boldText}>{customerMilkSummary.buffalo} L</Text>
+            </Text>
+          </View>
+        </View>
+
+        {/* Box 2: Calendar / Date Selector */}
+        <TouchableOpacity
+          style={styles.dashboardBox}
+          activeOpacity={0.7}
+          onPress={() => {
+            setCalendarTargetField('main');
+            setCalendarPickerVisible(true);
+          }}
+        >
+          <View style={styles.dashHeaderRow}>
+            <MaterialCommunityIcons name="calendar-month" size={18} color={BrandColors.secondary} />
+            <Text style={styles.dashBoxTitle} numberOfLines={1}>
+              Delivery Date
+            </Text>
+          </View>
+          <View style={styles.dashDateCenter}>
+            <Text style={styles.dashDateValue} numberOfLines={1}>
+              {formatDisplayDate(selectedDate)}
+            </Text>
+            <Text style={styles.dashDateHint}>Tap to choose date 📅</Text>
+          </View>
+          <View style={styles.dashDateNavRow}>
+            <TouchableOpacity
+              onPress={(e) => {
+                e.stopPropagation();
+                handleDateChange(-1);
+              }}
+              style={styles.dashNavBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <MaterialCommunityIcons name="chevron-left" size={18} color={BrandColors.primaryDark} />
+            </TouchableOpacity>
+            <Text style={styles.dashNavLabel}>Change Day</Text>
+            <TouchableOpacity
+              onPress={(e) => {
+                e.stopPropagation();
+                handleDateChange(1);
+              }}
+              style={styles.dashNavBtn}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <MaterialCommunityIcons name="chevron-right" size={18} color={BrandColors.primaryDark} />
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </View>
+
+      {/* Daily Supply Summary Button */}
+      <TouchableOpacity
+        style={styles.dailySupplySummaryBtn}
+        onPress={() =>
+          router.push({
+            pathname: '/customer/daily-supply-summary',
+            params: { date: selectedDate },
+          } as any)
+        }
+        activeOpacity={0.85}
+      >
+        <View style={styles.dailySupplyBtnLeft}>
+          <View style={styles.dailySupplyIconBadge}>
+            <MaterialCommunityIcons name="chart-box-outline" size={20} color="#FFFFFF" />
+          </View>
+          <View style={styles.dailySupplyBtnTexts}>
+            <Text style={styles.dailySupplyBtnTitle}>Daily Supply Summary</Text>
+            <Text style={styles.dailySupplyBtnSub}>
+              Compare Daily Supply vs Customer Sales • Stock & P/L
+            </Text>
+          </View>
+        </View>
+        <MaterialCommunityIcons name="chevron-right" size={22} color="#FFFFFF" />
+      </TouchableOpacity>
 
       {/* Search Bar */}
       <View style={styles.searchSection}>
@@ -1013,14 +1066,13 @@ export default function CustomersScreen() {
         <Modal
           visible={addModalVisible}
           onDismiss={() => setAddModalVisible(false)}
-          contentContainerStyle={styles.modalContent}
+          contentContainerStyle={styles.addCustomerModalContent}
         >
-          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
-              style={{ maxHeight: 520 }}
-            >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.keyboardAvoidingView}
+          >
+            <View style={styles.addCustomerModalHeader}>
               <Text style={styles.modalTitle}>
                 {editingCustomer ? 'Edit Customer' : 'Customer Registration'}
               </Text>
@@ -1029,13 +1081,21 @@ export default function CustomersScreen() {
                   ? 'Update customer details and delivery preference'
                   : 'Register a customer for daily milk delivery'}
               </Text>
+            </View>
 
-              {custError ? (
-                <HelperText type="error" visible style={styles.helperText}>
-                  {custError}
-                </HelperText>
-              ) : null}
+            {custError ? (
+              <HelperText type="error" visible style={styles.helperText}>
+                {custError}
+              </HelperText>
+            ) : null}
 
+            <ScrollView
+              ref={addCustScrollRef}
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps="handled"
+              style={styles.addCustomerScrollView}
+              contentContainerStyle={styles.addCustomerScrollContent}
+            >
               {/* Field 1: Customer Name */}
               <TextInput
                 label="Customer Name *"
@@ -1096,67 +1156,54 @@ export default function CustomersScreen() {
                 />
               </View>
 
-              {/* Field 5: Milk Delivery Date (start date – allow selecting any past or current date) */}
-              <View style={styles.dateFieldContainer}>
+              {/* Field 5: Milk Date (Click opens Calendar Date Picker) */}
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => {
+                  setCalendarTargetField('cust_reg');
+                  setCalendarPickerVisible(true);
+                }}
+                style={styles.datePickerTouchable}
+                accessibilityRole="button"
+                accessibilityLabel="Select Milk Date"
+              >
                 <TextInput
-                  label="Milk Delivery Date (Start Date) *"
-                  value={custStartDate}
-                  onChangeText={(t) => {
-                    setCustStartDate(t);
-                    setCustError('');
-                  }}
+                  label="Milk Date *"
+                  value={formatDisplayDate(custStartDate)}
+                  editable={false}
                   mode="outlined"
-                  style={styles.input}
-                  placeholder="YYYY-MM-DD"
+                  style={styles.inputNonEditable}
                   left={<TextInput.Icon icon="calendar" />}
+                  right={
+                    <TextInput.Icon
+                      icon="calendar-edit"
+                      onPress={() => {
+                        setCalendarTargetField('cust_reg');
+                        setCalendarPickerVisible(true);
+                      }}
+                    />
+                  }
+                  pointerEvents="none"
                 />
-                <View style={styles.dateQuickRow}>
-                  <Button
-                    mode="outlined"
-                    compact
-                    icon="chevron-left"
-                    onPress={() => setCustStartDate((d) => addDays(d, -1))}
-                    style={styles.quickDateBtn}
-                  >
-                    -1 Day
-                  </Button>
-                  <Button
-                    mode="outlined"
-                    compact
-                    icon="calendar-today"
-                    onPress={() => setCustStartDate(getTodayKolkata())}
-                    style={styles.quickDateBtn}
-                  >
-                    Today
-                  </Button>
-                  <Button
-                    mode="outlined"
-                    compact
-                    icon="chevron-right"
-                    onPress={() => setCustStartDate((d) => addDays(d, 1))}
-                    style={styles.quickDateBtn}
-                  >
-                    +1 Day
-                  </Button>
-                </View>
-                {/* Formatted Date Display & Past Date Accounting Notice */}
-                <View style={styles.dateNoticeRow}>
-                  <Text style={styles.dateNoticeText}>
-                    📅 Starting: <Text style={styles.boldText}>{formatDisplayDate(custStartDate)}</Text>
-                  </Text>
-                  {custStartDate < getTodayKolkata() ? (
-                    <Text style={styles.pastDateNotice}>
-                      ⚡ Starts from a past date ({getDaysDifference(custStartDate, getTodayKolkata())} days ago). Previous days will be automatically accounted for as pending.
-                    </Text>
-                  ) : (
-                    <Text style={styles.todayNotice}>
-                      ✓ Starts today.
-                    </Text>
-                  )}
-                </View>
-              </View>
+              </TouchableOpacity>
 
-              {/* Field 6: Milk Price (per litre) */}
+              {/* Field 6: How Many Litres of Milk? */}
+              <TextInput
+                label="How Many Litres of Milk? *"
+                value={custQuantityStr}
+                onChangeText={(t) => {
+                  setCustQuantityStr(t);
+                  setCustError('');
+                }}
+                mode="outlined"
+                keyboardType="decimal-pad"
+                style={styles.input}
+                placeholder="e.g. 1.5"
+                left={<TextInput.Icon icon="cup-water" />}
+                right={<TextInput.Affix text="Litres" />}
+              />
+
+              {/* Field 7: Milk Price (per litre) */}
               <TextInput
                 label="Milk Price (per litre) *"
                 value={custPriceStr}
@@ -1172,7 +1219,7 @@ export default function CustomersScreen() {
                 right={<TextInput.Affix text="₹/L" />}
               />
 
-              {/* Field 7: Milk Delivery Time – Morning or Evening (dropdown/selection option) */}
+              {/* Field 8: Milk Delivery Time */}
               <View style={styles.timeSection}>
                 <Text style={styles.fieldLabel}>Milk Delivery Time *</Text>
                 <SegmentedButtons
@@ -1185,27 +1232,28 @@ export default function CustomersScreen() {
                   style={styles.timeSegmented}
                 />
               </View>
-
-              <View style={styles.modalActions}>
-                <Button
-                  mode="text"
-                  onPress={() => setAddModalVisible(false)}
-                  disabled={savingCust}
-                  textColor={BrandColors.neutralGray}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  mode="contained"
-                  onPress={handleSaveCustomer}
-                  loading={savingCust}
-                  disabled={savingCust}
-                  buttonColor={BrandColors.primaryDark}
-                >
-                  {editingCustomer ? 'Update Customer' : 'Save Customer'}
-                </Button>
-              </View>
             </ScrollView>
+
+            {/* Permanent fixed action footer - always pinned and visible above keyboard! */}
+            <View style={styles.modalFixedActions}>
+              <Button
+                mode="text"
+                onPress={() => setAddModalVisible(false)}
+                disabled={savingCust}
+                textColor={BrandColors.neutralGray}
+              >
+                Cancel
+              </Button>
+              <Button
+                mode="contained"
+                onPress={handleSaveCustomer}
+                loading={savingCust}
+                disabled={savingCust}
+                buttonColor={BrandColors.primaryDark}
+              >
+                {editingCustomer ? 'Update Customer' : 'Save Customer'}
+              </Button>
+            </View>
           </KeyboardAvoidingView>
         </Modal>
       </Portal>
@@ -1970,7 +2018,9 @@ export default function CustomersScreen() {
             ? custHistoryDate
             : calendarTargetField === 'custom_start'
             ? custCustomStartDate
-            : custCustomEndDate
+            : calendarTargetField === 'custom_end'
+            ? custCustomEndDate
+            : custStartDate
         }
         onSelectDate={handleCalendarDateSelected}
         onDismiss={() => setCalendarPickerVisible(false)}
@@ -1981,7 +2031,9 @@ export default function CustomersScreen() {
             ? 'Select Daily History Date'
             : calendarTargetField === 'custom_start'
             ? 'Select Custom Start Date'
-            : 'Select Custom End Date'
+            : calendarTargetField === 'custom_end'
+            ? 'Select Custom End Date'
+            : 'Select Milk Date'
         }
         zIndex={99999}
       />
@@ -2254,6 +2306,138 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 8,
   },
+  dashboardContainer: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 16,
+    marginTop: 10,
+    marginBottom: 8,
+  },
+  dashboardBox: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 10,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: BrandColors.borderLight,
+    justifyContent: 'space-between',
+    minHeight: 116,
+  },
+  dashHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 2,
+  },
+  dashBoxTitle: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: BrandColors.textSecondaryLight,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  dashTotalValueRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 3,
+    marginVertical: 2,
+  },
+  dashTotalValue: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: BrandColors.primaryDark,
+  },
+  dashTotalUnit: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: BrandColors.neutralGray,
+  },
+  dashBreakdownRow: {
+    flexDirection: 'column',
+    gap: 2,
+    marginTop: 2,
+  },
+  dashBreakdownBadge: {
+    fontSize: 11,
+    color: BrandColors.textLight,
+  },
+  dashDateCenter: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 2,
+  },
+  dashDateValue: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: BrandColors.textLight,
+    textAlign: 'center',
+  },
+  dashDateHint: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: BrandColors.primaryDark,
+    marginTop: 1,
+  },
+  dashDateNavRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+    paddingTop: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  dashNavBtn: {
+    padding: 2,
+    borderRadius: 4,
+    backgroundColor: '#F1F5F9',
+  },
+  dashNavLabel: {
+    fontSize: 10,
+    color: BrandColors.neutralGray,
+    fontWeight: '600',
+  },
+  dailySupplySummaryBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: BrandColors.primaryDark,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 10,
+    elevation: 2,
+  },
+  dailySupplyBtnLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  dailySupplyIconBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  dailySupplyBtnTexts: {
+    flex: 1,
+  },
+  dailySupplyBtnTitle: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  dailySupplyBtnSub: {
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 10,
+    fontWeight: '500',
+    marginTop: 1,
+  },
   dateSelectorCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 10,
@@ -2485,6 +2669,42 @@ const styles = StyleSheet.create({
     margin: 20,
     padding: 20,
     borderRadius: 14,
+  },
+  addCustomerModalContent: {
+    backgroundColor: '#FFFFFF',
+    margin: 16,
+    padding: 16,
+    borderRadius: 14,
+    maxHeight: '90%',
+  },
+  keyboardAvoidingView: {
+    flexShrink: 1,
+  },
+  addCustomerModalHeader: {
+    marginBottom: 4,
+  },
+  addCustomerScrollView: {
+    flexShrink: 1,
+  },
+  addCustomerScrollContent: {
+    paddingBottom: 8,
+  },
+  datePickerTouchable: {
+    marginBottom: 10,
+  },
+  inputNonEditable: {
+    backgroundColor: '#F8FAFC',
+    marginBottom: 0,
+  },
+  modalFixedActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginTop: 6,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#E2E8F0',
+    backgroundColor: '#FFFFFF',
   },
   modalTitle: {
     fontSize: 18,

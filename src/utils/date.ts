@@ -44,6 +44,32 @@ export function formatShortDate(dateString: string): string {
   });
 }
 
+/**
+ * Format date to simple "Date, Day, Month" string (e.g. "01 Sun, Nov")
+ */
+export function formatDateDayMonth(dateString: string): string {
+  if (!dateString) return '';
+  const [year, month, day] = dateString.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  const dayNum = date.getDate().toString().padStart(2, '0');
+  const dayName = date.toLocaleDateString('en-IN', { weekday: 'short' });
+  const monthName = date.toLocaleDateString('en-IN', { month: 'short' });
+  return `${dayNum} ${dayName}, ${monthName}`;
+}
+
+/**
+ * Format date to "Date Month · Day" string (e.g. "01 Nov · Sunday")
+ */
+export function formatDateAndDay(dateString: string): string {
+  if (!dateString) return '';
+  const [year, month, day] = dateString.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  const dayNum = date.getDate().toString().padStart(2, '0');
+  const monthName = date.toLocaleDateString('en-IN', { month: 'short' });
+  const dayName = date.toLocaleDateString('en-IN', { weekday: 'long' });
+  return `${dayNum} ${monthName} · ${dayName}`;
+}
+
 export function getMonthName(month: number): string {
   const months = [
     'January', 'February', 'March', 'April', 'May', 'June',

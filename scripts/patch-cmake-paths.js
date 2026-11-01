@@ -3,6 +3,12 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
+// Only run on Windows where path spaces cause issues with CMake
+if (process.env.EAS_BUILD || process.env.CI || process.platform !== 'win32') {
+  console.log('[patch-cmake-paths] Skipping CMake path patches in Linux/EAS/CI environment.');
+  process.exit(0);
+}
+
 function createJunction(linkPath, targetPath) {
   if (fs.existsSync(targetPath) && !fs.existsSync(linkPath)) {
     try {

@@ -550,10 +550,10 @@ export async function generateSupplyHistoryPDF(
 ): Promise<void> {
   const typeTitle =
     reportType === 'daily'
-      ? 'Daily Supply & Sales Report'
+      ? 'Daily Supply Purchase Report'
       : reportType === 'monthly'
-      ? 'Monthly Supply & Sales Report'
-      : 'Custom Period Supply & Sales Report';
+      ? 'Monthly Supply Purchase Report'
+      : 'Custom Period Supply Purchase Report';
 
   // Build supplier breakdown rows
   const supplierRowsHtml = history.suppliers
@@ -563,11 +563,7 @@ export async function generateSupplyHistoryPDF(
         <td><strong>${s.supplierName}</strong><br/><span style="font-size: 11px; color: #64748b;">${s.supplierPhone}</span></td>
         <td class="text-right">${s.totalPurchasedLiters} L</td>
         <td class="text-right">₹${s.totalPurchaseAmount.toLocaleString('en-IN')}</td>
-        <td class="text-right" style="color: #16a34a; font-weight: 600;">${s.totalSoldLiters} L</td>
-        <td class="text-right" style="color: ${s.totalRemainingLiters === 0 ? '#16a34a' : '#d97706'}; font-weight: 600;">${s.totalRemainingLiters} L</td>
-        <td class="text-right" style="color: ${s.totalWastageLiters === 0 ? '#16a34a' : '#dc2626'}; font-weight: 600;">${s.totalWastageLiters} L</td>
-        <td class="text-right" style="color: ${s.totalLossAmount === 0 ? '#16a34a' : '#dc2626'}; font-weight: 600;">₹${s.totalLossAmount.toLocaleString('en-IN')}</td>
-        <td class="text-right">${s.totalSalesRevenue > 0 ? `₹${s.totalSalesRevenue.toLocaleString('en-IN')}` : '-'}</td>
+        <td class="text-right">${s.sessions.reduce((acc, sess) => acc + sess.purchases.length, 0)} Sessions</td>
       </tr>
     `
     )
@@ -579,7 +575,6 @@ export async function generateSupplyHistoryPDF(
       const sessionEmoji =
         p.session === 'evening' ? '🌇 Evening' : p.session === 'afternoon' ? '☀️ Afternoon' : '🌅 Morning';
       const catLabel = p.milkCategory === 'cow' ? '🐄 Cow' : '🐃 Buffalo';
-      const isNoLoss = p.actualWastageQuantity === 0;
 
       return `
       <tr>
@@ -589,11 +584,6 @@ export async function generateSupplyHistoryPDF(
         <td class="text-right">${p.quantityLiters} L</td>
         <td class="text-right">₹${p.pricePerLiter.toLocaleString('en-IN')}</td>
         <td class="text-right">₹${p.totalAmount.toLocaleString('en-IN')}</td>
-        <td class="text-right" style="color: #16a34a; font-weight: 600;">${p.totalSoldQuantity || 0} L</td>
-        <td class="text-right" style="color: ${p.remainingQuantity === 0 ? '#16a34a' : '#d97706'}; font-weight: 600;">${p.remainingQuantity} L</td>
-        <td class="text-right" style="color: ${isNoLoss ? '#16a34a' : '#dc2626'}; font-weight: 600;">${p.actualWastageQuantity} L</td>
-        <td class="text-right" style="color: ${isNoLoss ? '#16a34a' : '#dc2626'}; font-weight: 600;">₹${p.actualLossAmount.toLocaleString('en-IN')}</td>
-        <td class="text-center"><span class="badge ${isNoLoss ? 'badge-morning' : 'badge-evening'}">${isNoLoss ? 'No Loss' : `${p.actualWastageQuantity}L Wasted`}</span></td>
       </tr>
     `;
     })
@@ -616,7 +606,7 @@ export async function generateSupplyHistoryPDF(
       </head>
       <body>
         <div class="header">
-          <h1 class="title">Milk Billing – Supply & Sales Report</h1>
+          <h1 class="title">Milk Billing – Supply Purchase Report</h1>
           <div class="subtitle">${typeTitle} • <strong>${history.periodLabel}</strong></div>
         </div>
 
@@ -643,19 +633,19 @@ export async function generateSupplyHistoryPDF(
             <div style="font-size: 11px; color: #64748b; margin-top: 2px;">₹${history.totalPurchaseAmount.toLocaleString('en-IN')}</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-title">Total Sold</div>
-            <div class="kpi-val" style="color: #16a34a;">${history.totalSoldLiters} L</div>
-            <div style="font-size: 11px; color: #64748b; margin-top: 2px;">₹${history.totalSalesRevenue.toLocaleString('en-IN')}</div>
+            <div class="kpi-title">Total Records</div>
+            <div class="kpi-val" style="color: #1565c0;">${history.transactions.length}</div>
+            <div style="font-size: 11px; color: #64748b; margin-top: 2px;">Purchases</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-title">Remaining Milk</div>
-            <div class="kpi-val" style="color: ${history.totalRemainingLiters === 0 ? '#16a34a' : '#d97706'};">${history.totalRemainingLiters} L</div>
-            <div style="font-size: 11px; color: #64748b; margin-top: 2px;">${history.totalRemainingLiters === 0 ? 'No Loss' : 'In Stock'}</div>
+            <div class="kpi-title">Buffalo Milk</div>
+            <div class="kpi-val" style="color: #1e293b;">${history.buffaloPurchased} L</div>
+            <div style="font-size: 11px; color: #64748b; margin-top: 2px;">₹${history.buffaloPurchaseAmount.toLocaleString('en-IN')}</div>
           </div>
           <div class="kpi-card">
-            <div class="kpi-title">Waste of Money</div>
-            <div class="kpi-val" style="color: ${history.totalLossAmount === 0 ? '#16a34a' : '#dc2626'};">₹${history.totalLossAmount.toLocaleString('en-IN')}</div>
-            <div style="font-size: 11px; color: ${history.totalLossAmount === 0 ? '#16a34a' : '#dc2626'}; margin-top: 2px;">Waste of Milk: ${history.totalWastageLiters} L</div>
+            <div class="kpi-title">Cow Milk</div>
+            <div class="kpi-val" style="color: #1e293b;">${history.cowPurchased} L</div>
+            <div style="font-size: 11px; color: #64748b; margin-top: 2px;">₹${history.cowPurchaseAmount.toLocaleString('en-IN')}</div>
           </div>
         </div>
 
@@ -666,8 +656,6 @@ export async function generateSupplyHistoryPDF(
             <tr>
               <th>Milk Category</th>
               <th class="text-right">Purchased (L)</th>
-              <th class="text-right">Sold (L)</th>
-              <th class="text-right">Remaining (L)</th>
               <th class="text-right">Purchase Amount</th>
             </tr>
           </thead>
@@ -675,15 +663,11 @@ export async function generateSupplyHistoryPDF(
             <tr>
               <td>🐃 Buffalo Milk</td>
               <td class="text-right">${history.buffaloPurchased} L</td>
-              <td class="text-right" style="color: #16a34a; font-weight: 600;">${history.buffaloSold} L</td>
-              <td class="text-right" style="color: ${history.buffaloRemaining === 0 ? '#16a34a' : '#d97706'}; font-weight: 600;">${history.buffaloRemaining} L</td>
               <td class="text-right">₹${history.buffaloPurchaseAmount.toLocaleString('en-IN')}</td>
             </tr>
             <tr>
               <td>🐄 Cow Milk</td>
               <td class="text-right">${history.cowPurchased} L</td>
-              <td class="text-right" style="color: #16a34a; font-weight: 600;">${history.cowSold} L</td>
-              <td class="text-right" style="color: ${history.cowRemaining === 0 ? '#16a34a' : '#d97706'}; font-weight: 600;">${history.cowRemaining} L</td>
               <td class="text-right">₹${history.cowPurchaseAmount.toLocaleString('en-IN')}</td>
             </tr>
           </tbody>
@@ -697,20 +681,16 @@ export async function generateSupplyHistoryPDF(
               <th>Supplier</th>
               <th class="text-right">Purchased</th>
               <th class="text-right">Total Cost</th>
-              <th class="text-right">Sold</th>
-              <th class="text-right">Remaining</th>
-              <th class="text-right">Waste of Milk</th>
-              <th class="text-right">Waste of Money</th>
-              <th class="text-right">Sales Revenue</th>
+              <th class="text-right">Sessions</th>
             </tr>
           </thead>
           <tbody>
-            ${supplierRowsHtml || '<tr><td colspan="8" class="text-center">No supplier records found.</td></tr>'}
+            ${supplierRowsHtml || '<tr><td colspan="4" class="text-center">No supplier records found.</td></tr>'}
           </tbody>
         </table>
 
         <!-- Detailed Transactions -->
-        <div class="section-heading">3. Detailed Purchase &amp; Sales Transactions (${history.transactions.length})</div>
+        <div class="section-heading">3. Detailed Purchase Transactions (${history.transactions.length})</div>
         <table>
           <thead>
             <tr>
@@ -720,15 +700,10 @@ export async function generateSupplyHistoryPDF(
               <th class="text-right">Purchased</th>
               <th class="text-right">Rate</th>
               <th class="text-right">Total Amt</th>
-              <th class="text-right">Sold</th>
-              <th class="text-right">Remaining</th>
-              <th class="text-right">Waste of Milk</th>
-              <th class="text-right">Waste of Money</th>
-              <th class="text-center">Status</th>
             </tr>
           </thead>
           <tbody>
-            ${transactionRowsHtml || '<tr><td colspan="11" class="text-center">No transactions found.</td></tr>'}
+            ${transactionRowsHtml || '<tr><td colspan="6" class="text-center">No transactions found.</td></tr>'}
           </tbody>
         </table>
 
@@ -738,29 +713,9 @@ export async function generateSupplyHistoryPDF(
             <span>Total Milk Purchased:</span>
             <strong>${history.totalPurchasedLiters} Litres</strong>
           </div>
-          <div class="summary-row">
+          <div class="summary-row summary-total">
             <span>Total Purchase Expenditure:</span>
             <strong>₹${history.totalPurchaseAmount.toLocaleString('en-IN')}</strong>
-          </div>
-          <div class="summary-row">
-            <span>Total Milk Sold:</span>
-            <strong style="color: #16a34a;">${history.totalSoldLiters} Litres</strong>
-          </div>
-          <div class="summary-row">
-            <span>Total Sales Revenue:</span>
-            <strong style="color: #16a34a;">₹${history.totalSalesRevenue.toLocaleString('en-IN')}</strong>
-          </div>
-          <div class="summary-row">
-            <span>Remaining Unsold Milk:</span>
-            <strong style="color: ${history.totalRemainingLiters === 0 ? '#16a34a' : '#d97706'};">${history.totalRemainingLiters} Litres</strong>
-          </div>
-          <div class="summary-row">
-            <span>Waste of Milk:</span>
-            <strong style="color: ${history.totalWastageLiters === 0 ? '#16a34a' : '#dc2626'};">${history.totalWastageLiters} Litres</strong>
-          </div>
-          <div class="summary-row summary-total">
-            <span>Waste of Money:</span>
-            <span style="color: ${history.totalLossAmount === 0 ? '#16a34a' : '#dc2626'};">₹${history.totalLossAmount.toLocaleString('en-IN')}</span>
           </div>
         </div>
       </body>

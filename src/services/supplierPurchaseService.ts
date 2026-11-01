@@ -234,8 +234,8 @@ export async function deleteSupplierPurchase(purchaseId: string): Promise<void> 
 }
 
 /**
- * Delete a supplier and optionally all associated purchase history.
- * Historical records from all dates (morning and evening) are safely cleaned up.
+ * Delete a supplier and properly handle associated purchase and sales records.
+ * Excludes the supplier's milk quantity from active stock immediately.
  */
 export async function deleteSupplier(
   supplierId: string,
@@ -243,13 +243,60 @@ export async function deleteSupplier(
 ): Promise<void> {
   const userId = await ensureAuthenticatedUserId();
 
-  if (deleteHistory) {
-    const coll = getPurchasesCollection(userId);
-    const q = query(coll, where('supplierId', '==', supplierId));
-    const snapshot = await getDocs(q);
+  // 1. Handle milkPurchases associated with this supplier
+  const milkPurchasesColl = collection(db, 'users', userId, 'milkPurchases');
+  const mpQuery = query(milkPurchasesColl, where('supplierId', '==', supplierId));
+  const mpSnap = await getDocs(mpQuery);
 
-    // Delete in safe chunks of 400 docs to avoid Firestore batch limits
-    const docs = snapshot.docs;
+  const mpDocs = mpSnap.docs;
+  for (let i = 0; i < mpDocs.length; i += 400) {
+    const batch = writeBatch(db);
+    const chunk = mpDocs.slice(i, i + 400);
+    chunk.forEach((d) => {
+      if (deleteHistory) {
+        batch.delete(d.ref);
+      } else {
+        batch.update(d.ref, {
+          supplierDeleted: true,
+          isSupplierDeleted: true,
+          remainingQuantity: 0,
+          updatedAt: Date.now(),
+        });
+      }
+    });
+    await batch.commit();
+  }
+
+  // 2. Handle milkSales associated with this supplier
+  const salesColl = collection(db, 'users', userId, 'milkSales');
+  const salesQuery = query(salesColl, where('supplierId', '==', supplierId));
+  const salesSnap = await getDocs(salesQuery);
+
+  const salesDocs = salesSnap.docs;
+  for (let i = 0; i < salesDocs.length; i += 400) {
+    const batch = writeBatch(db);
+    const chunk = salesDocs.slice(i, i + 400);
+    chunk.forEach((d) => {
+      if (deleteHistory) {
+        batch.delete(d.ref);
+      } else {
+        batch.update(d.ref, {
+          supplierDeleted: true,
+          isSupplierDeleted: true,
+          updatedAt: Date.now(),
+        });
+      }
+    });
+    await batch.commit();
+  }
+
+  // 3. Handle legacy supplierPurchases if any
+  if (deleteHistory) {
+    const legColl = getPurchasesCollection(userId);
+    const legQ = query(legColl, where('supplierId', '==', supplierId));
+    const legSnap = await getDocs(legQ);
+
+    const docs = legSnap.docs;
     for (let i = 0; i < docs.length; i += 400) {
       const batch = writeBatch(db);
       const chunk = docs.slice(i, i + 400);
@@ -258,7 +305,7 @@ export async function deleteSupplier(
     }
   }
 
-  // Delete the supplier doc
+  // 4. Delete the supplier doc
   const supplierRef = doc(db, 'users', userId, 'suppliers', supplierId);
   await deleteDoc(supplierRef);
 }

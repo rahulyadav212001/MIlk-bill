@@ -37,6 +37,8 @@ export interface SupplierPurchase {
   totalSoldQuantity?: number;
   remainingQuantity?: number;
   wastageQuantity?: number;
+  supplierDeleted?: boolean;
+  isSupplierDeleted?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -59,6 +61,8 @@ export interface MilkPurchase {
   isSold?: boolean;
   status?: 'pending' | 'sold' | 'completed';
   saleRecordId?: string;
+  supplierDeleted?: boolean;
+  isSupplierDeleted?: boolean;
   createdAt: number;
   updatedAt: number;
 }

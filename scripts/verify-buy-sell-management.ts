@@ -62,11 +62,11 @@ async function runVerification() {
     'Req 1.3: Top of Supply screen displays Add Supply and History buttons'
   );
 
-  // 1.3 Below these actions, two tabs: Buy and Sell
+  // 1.3 Center section features prominent Buy Milk button, with Sell button completely removed
   assert(
-    supplierScreenCode.includes("label: '🛒 Buy'") &&
-      supplierScreenCode.includes("label: '🏷️ Sell'"),
-    'Req 1.4: Buy and Sell tabs exist below the top action buttons'
+    supplierScreenCode.includes('largeBuyCard') &&
+      !supplierScreenCode.includes("route: '/supplier/sell'"),
+    'Req 1.4: Sell button completely removed from Supply screen and Buy Milk is prominent'
   );
 
   // 1.4 Supplier Registration modal has ONLY Supplier Name and Phone Number (NO Milk Category)
@@ -115,26 +115,30 @@ async function runVerification() {
     'Req 1.12: Searchbar added for filtering suppliers by name or phone'
   );
 
+  const sellScreenCode = fs.existsSync(path.resolve(process.cwd(), 'src/app/supplier/sell.tsx'))
+    ? fs.readFileSync(path.resolve(process.cwd(), 'src/app/supplier/sell.tsx'), 'utf-8')
+    : '';
+
   // 1.7 Sales Screen: ONLY the 6 purchase fields and ONLY ONE input field (Milk Sold)
   assert(
-    supplierScreenCode.includes('Supplier Name:') &&
-      supplierScreenCode.includes('Milk Category:') &&
-      supplierScreenCode.includes('Purchase Session:') &&
-      supplierScreenCode.includes('Purchased Quantity:') &&
-      supplierScreenCode.includes('Purchase Rate per Litre:') &&
-      supplierScreenCode.includes('Total Purchase Amount:'),
+    sellScreenCode.includes('Supplier Name:') &&
+      sellScreenCode.includes('Milk Category:') &&
+      sellScreenCode.includes('Purchase Session:') &&
+      sellScreenCode.includes('Purchased Quantity:') &&
+      sellScreenCode.includes('Purchase Rate per Litre:') &&
+      sellScreenCode.includes('Total Purchase Amount:'),
     'Req 1.13: Sales modal displays strictly the 6 purchase transaction fields'
   );
   assert(
-    supplierScreenCode.includes('label="Milk Sold (Litres) *"'),
+    sellScreenCode.includes('label="Milk Sold (Litres) *"'),
     'Req 1.14: Sales modal displays ONLY ONE input field: Milk Sold (Litres)'
   );
 
   // 1.8 Duplicate sale prevention & completed view
   assert(
-    supplierScreenCode.includes('Sale Completed') &&
-      supplierScreenCode.includes('Permanently Recorded') &&
-      supplierScreenCode.includes('selectedPurchase.isSold'),
+    sellScreenCode.includes('Sale Completed') &&
+      sellScreenCode.includes('Permanently Recorded') &&
+      sellScreenCode.includes('selectedPurchase.isSold'),
     'Req 1.15: Once sold, sales input is disabled and replaced by completed sales summary'
   );
 
@@ -146,8 +150,8 @@ async function runVerification() {
     'Req 1.16: Milk Purchase modal has a close (X) button beside the Milk Purchase heading'
   );
   assert(
-    supplierScreenCode.includes('Milk Sale Record') &&
-      supplierScreenCode.includes('setSalesDetailsModalVisible(false)'),
+    sellScreenCode.includes('Milk Sale Record') &&
+      sellScreenCode.includes('setSalesDetailsModalVisible(false)'),
     'Req 1.17: Sales modal has a close (X) button beside the Milk Sale Record heading'
   );
 

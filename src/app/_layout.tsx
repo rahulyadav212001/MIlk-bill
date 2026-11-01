@@ -44,6 +44,20 @@ export default function RootLayout() {
           <Stack.Screen name="index" />
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen
+            name="supplier/buy"
+            options={{
+              headerShown: false,
+              presentation: 'card',
+            }}
+          />
+          <Stack.Screen
+            name="supplier/sell"
+            options={{
+              headerShown: false,
+              presentation: 'card',
+            }}
+          />
+          <Stack.Screen
             name="supplier/[id]/history"
             options={{
               headerShown: false,
@@ -52,6 +66,13 @@ export default function RootLayout() {
           />
           <Stack.Screen
             name="customer/[id]/history"
+            options={{
+              headerShown: false,
+              presentation: 'card',
+            }}
+          />
+          <Stack.Screen
+            name="customer/daily-supply-summary"
             options={{
               headerShown: false,
               presentation: 'card',

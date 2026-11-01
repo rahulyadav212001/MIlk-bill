@@ -800,6 +800,174 @@ export async function deleteMilkPurchase(purchaseId: string): Promise<void> {
   for (const s of snap.docs) {
     await deleteDoc(s.ref);
   }
+
+  // Also clean up legacy supplierPurchases if present
+  try {
+    const legRef = doc(db, 'users', userId, 'supplierPurchases', purchaseId);
+    await deleteDoc(legRef);
+  } catch {
+    // Ignore legacy cleanup error
+  }
+}
+
+/**
+ * Update an existing milk purchase transaction.
+ * Automatically recalculates total amount, remaining quantity, wastage, loss, and status.
+ * If a linked sale document exists, automatically synchronizes the sale record with updated purchase data.
+ */
+export async function updateMilkPurchase(
+  purchaseId: string,
+  updates: {
+    quantityLiters?: number;
+    pricePerLiter?: number;
+    milkCategory?: MilkCategory;
+    session?: MilkSession;
+    purchaseDate?: string;
+  }
+): Promise<MilkPurchase> {
+  const userId = await ensureAuthenticatedUserId();
+  const pRef = doc(db, 'users', userId, 'milkPurchases', purchaseId);
+  const pSnap = await getDoc(pRef);
+  if (!pSnap.exists()) {
+    throw new Error('Purchase record not found.');
+  }
+  const current = pSnap.data() as MilkPurchase;
+
+  const newQty = updates.quantityLiters !== undefined ? Number(updates.quantityLiters) : current.quantityLiters;
+  const newPrice = updates.pricePerLiter !== undefined ? Number(updates.pricePerLiter) : current.pricePerLiter;
+  const newCategory = updates.milkCategory || current.milkCategory || 'buffalo';
+  const newSession = updates.session || current.session || 'morning';
+  const newDate = updates.purchaseDate || current.purchaseDate;
+
+  if (isNaN(newQty) || newQty <= 0) {
+    throw new Error('Milk quantity must be greater than 0 Litres.');
+  }
+  if (isNaN(newPrice) || newPrice <= 0) {
+    throw new Error('Purchase rate per litre must be greater than ₹0.');
+  }
+
+  const soldQty = Number(current.totalSoldQuantity) || 0;
+  if (soldQty > newQty) {
+    throw new Error(`Cannot reduce purchase quantity to ${newQty} L because ${soldQty} L has already been sold.`);
+  }
+
+  const newTotalAmount = Number((newQty * newPrice).toFixed(2));
+  const newRemaining = Math.max(0, Number((newQty - soldQty).toFixed(2)));
+  const newWastage = newRemaining;
+  const newLoss = Number((newWastage * newPrice).toFixed(2));
+  const isSold = soldQty > 0 || current.isSold === true;
+  const status = isSold ? (newRemaining === 0 ? 'sold' : 'pending') : 'pending';
+
+  const updatedRecord: Partial<MilkPurchase> = {
+    quantityLiters: newQty,
+    pricePerLiter: newPrice,
+    totalAmount: newTotalAmount,
+    milkCategory: newCategory,
+    session: newSession,
+    purchaseDate: newDate,
+    remainingQuantity: newRemaining,
+    wastageQuantity: newWastage,
+    lossAmount: newLoss,
+    status: status as any,
+    updatedAt: Date.now(),
+  };
+
+  await updateDoc(pRef, cleanDocData(updatedRecord));
+
+  // Sync linked sales record if exists
+  const saleDocId = `sale_${purchaseId}`;
+  const saleRef = doc(db, 'users', userId, 'milkSales', saleDocId);
+  const saleSnap = await getDoc(saleRef);
+  if (saleSnap.exists()) {
+    const saleData = saleSnap.data() as MilkSale;
+    const saleSold = Number(saleData.soldQuantityLiters) || soldQty;
+    const saleRemaining = Math.max(0, Number((newQty - saleSold).toFixed(2)));
+    const saleLoss = Number((saleRemaining * newPrice).toFixed(2));
+
+    await updateDoc(saleRef, cleanDocData({
+      purchasedQuantityLiters: newQty,
+      purchasePricePerLiter: newPrice,
+      totalPurchaseAmount: newTotalAmount,
+      milkCategory: newCategory,
+      session: newSession,
+      purchaseDate: newDate,
+      remainingQuantityLiters: saleRemaining,
+      remainingQuantity: saleRemaining,
+      wastageQuantity: saleRemaining,
+      lossAmount: saleLoss,
+      status: saleRemaining === 0 ? 'no_loss' : 'loss',
+      statusText: saleRemaining === 0 ? 'No Loss' : `${saleRemaining} Litres Remaining`,
+      updatedAt: Date.now(),
+    }));
+  }
+
+  return {
+    ...current,
+    ...updatedRecord,
+  } as MilkPurchase;
+}
+
+export interface SupplierInventoryBreakdown {
+  supplierId: string;
+  totalPurchased: number;
+  totalSold: number;
+  remaining: number;
+  buffaloPurchased: number;
+  buffaloSold: number;
+  buffaloRemaining: number;
+  cowPurchased: number;
+  cowSold: number;
+  cowRemaining: number;
+  entriesCount: number;
+}
+
+/**
+ * Helper to compute separate Buffalo & Cow breakdown for a specific supplier
+ */
+export function computeSupplierInventory(
+  supplierId: string,
+  purchases: MilkPurchase[]
+): SupplierInventoryBreakdown {
+  const supPurchases = purchases.filter(
+    (p) => p.supplierId === supplierId && !(p as any).supplierDeleted && !(p as any).isSupplierDeleted
+  );
+
+  let buffaloPurchased = 0;
+  let buffaloSold = 0;
+  let buffaloRemaining = 0;
+  let cowPurchased = 0;
+  let cowSold = 0;
+  let cowRemaining = 0;
+
+  for (const p of supPurchases) {
+    const qty = Number(p.quantityLiters) || 0;
+    const sold = Number(p.totalSoldQuantity) || 0;
+    const rem = Number(p.remainingQuantity) || Math.max(0, qty - sold);
+
+    if (p.milkCategory === 'cow') {
+      cowPurchased += qty;
+      cowSold += sold;
+      cowRemaining += rem;
+    } else {
+      buffaloPurchased += qty;
+      buffaloSold += sold;
+      buffaloRemaining += rem;
+    }
+  }
+
+  return {
+    supplierId,
+    totalPurchased: Number((buffaloPurchased + cowPurchased).toFixed(2)),
+    totalSold: Number((buffaloSold + cowSold).toFixed(2)),
+    remaining: Number((buffaloRemaining + cowRemaining).toFixed(2)),
+    buffaloPurchased: Number(buffaloPurchased.toFixed(2)),
+    buffaloSold: Number(buffaloSold.toFixed(2)),
+    buffaloRemaining: Number(buffaloRemaining.toFixed(2)),
+    cowPurchased: Number(cowPurchased.toFixed(2)),
+    cowSold: Number(cowSold.toFixed(2)),
+    cowRemaining: Number(cowRemaining.toFixed(2)),
+    entriesCount: supPurchases.length,
+  };
 }
 
 /**
@@ -838,7 +1006,8 @@ function computeCategoryStock(
 }
 
 /**
- * Calculate complete daily stock summary
+ * Calculate complete daily stock summary.
+ * Filters out deleted or inactive suppliers to ensure accurate active stock calculation.
  */
 export function calculateDailyStockSummary(
   date: string,
@@ -847,8 +1016,24 @@ export function calculateDailyStockSummary(
 ): {
   overall: OverallStockSummary;
 } {
-  const buffalo = computeCategoryStock('buffalo', purchases);
-  const cow = computeCategoryStock('cow', purchases);
+  const activeSupplierIds = new Set(
+    (suppliers || []).filter((s) => s.isActive !== false).map((s) => s.id)
+  );
+
+  const activePurchases =
+    suppliers && suppliers.length > 0
+      ? purchases.filter(
+          (p) =>
+            activeSupplierIds.has(p.supplierId) &&
+            !(p as any).supplierDeleted &&
+            !(p as any).isSupplierDeleted
+        )
+      : purchases.filter(
+          (p) => !(p as any).supplierDeleted && !(p as any).isSupplierDeleted
+        );
+
+  const buffalo = computeCategoryStock('buffalo', activePurchases);
+  const cow = computeCategoryStock('cow', activePurchases);
 
   const totalPurchasedLiters = Number((buffalo.purchasedLiters + cow.purchasedLiters).toFixed(2));
   const totalSoldLiters = Number((buffalo.soldLiters + cow.soldLiters).toFixed(2));
