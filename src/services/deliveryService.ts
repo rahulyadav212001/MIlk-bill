@@ -112,6 +112,8 @@ export async function initializeDailyDeliveries(
       customerName: data.customerName || '',
       deliveryDate: data.deliveryDate,
       defaultQuantity: data.defaultQuantity || 0,
+      morningQuantity: data.morningQuantity !== undefined ? data.morningQuantity : undefined,
+      eveningQuantity: data.eveningQuantity !== undefined ? data.eveningQuantity : undefined,
       actualQuantity: data.actualQuantity !== undefined ? data.actualQuantity : 0,
       pricePerLiter: data.pricePerLiter || 0,
       amount: data.amount !== undefined ? data.amount : 0,
@@ -139,6 +141,8 @@ export async function initializeDailyDeliveries(
         customerName: customer.name,
         deliveryDate: date,
         defaultQuantity: customer.defaultDailyQuantity,
+        morningQuantity: 0,
+        eveningQuantity: 0,
         actualQuantity: 0,
         pricePerLiter: customer.pricePerLiter,
         amount: 0,
@@ -168,7 +172,27 @@ export async function initializeDailyDeliveries(
 
       const isHoliday = holidayCustomerIds.has(customer.id);
       const isAllowed = dateCheck.allowed && !isHoliday;
-      const actualQuantity = isAllowed ? customer.defaultDailyQuantity : 0;
+
+      let mQty = customer.morningQuantity;
+      let eQty = customer.eveningQuantity;
+      if (mQty === undefined && eQty === undefined) {
+        if (customer.deliveryTime === 'evening') {
+          mQty = 0;
+          eQty = customer.defaultDailyQuantity;
+        } else if (customer.deliveryTime === 'both') {
+          mQty = Number((customer.defaultDailyQuantity / 2).toFixed(2));
+          eQty = Number((customer.defaultDailyQuantity - mQty).toFixed(2));
+        } else {
+          mQty = customer.defaultDailyQuantity;
+          eQty = 0;
+        }
+      } else {
+        mQty = mQty || 0;
+        eQty = eQty || 0;
+      }
+      const dailyQty = (mQty + eQty) > 0 ? (mQty + eQty) : (customer.defaultDailyQuantity || 0);
+
+      const actualQuantity = isAllowed ? dailyQty : 0;
       const amount = isAllowed
         ? Number((actualQuantity * customer.pricePerLiter).toFixed(2))
         : 0;
@@ -182,7 +206,9 @@ export async function initializeDailyDeliveries(
         customerId: customer.id,
         customerName: customer.name,
         deliveryDate: date,
-        defaultQuantity: customer.defaultDailyQuantity,
+        defaultQuantity: dailyQty,
+        morningQuantity: isAllowed ? mQty : 0,
+        eveningQuantity: isAllowed ? eQty : 0,
         actualQuantity,
         pricePerLiter: customer.pricePerLiter,
         amount,
@@ -310,6 +336,8 @@ export async function getCustomerDeliveries(
       customerName: data.customerName || '',
       deliveryDate: data.deliveryDate,
       defaultQuantity: data.defaultQuantity || 0,
+      morningQuantity: data.morningQuantity !== undefined ? data.morningQuantity : undefined,
+      eveningQuantity: data.eveningQuantity !== undefined ? data.eveningQuantity : undefined,
       actualQuantity: data.actualQuantity || 0,
       pricePerLiter: data.pricePerLiter || 0,
       amount: data.amount || 0,
@@ -339,9 +367,10 @@ export async function deleteDelivery(deliveryId: string): Promise<void> {
 }
 
 /**
- * Automatically accounts for deliveries when a customer starts from a past date.
- * Creates delivery documents from startDate up to today so pending milk quantities
- * can be entered later.
+ * Automatically generates customer's applicable historical daily milk entries
+ * from startDate up to today when registering or updating backdated customers.
+ * Permanently stores daily entries in Firestore with correct quantity, price per litre,
+ * and daily total amount, and generates accurate monthly bills.
  */
 export async function accountForPastDeliveries(
   customer: Customer,
@@ -359,33 +388,130 @@ export async function accountForPastDeliveries(
 
   const delCol = getDeliveriesCollection(userId);
   const now = Date.now();
-  const batch = writeBatch(db);
+
+  // Check supplier holidays
+  const supCol = collection(db, 'users', userId, 'supplierHolidays');
+  const supSnap = await getDocs(supCol);
+  const supplierHolidays = supSnap.docs.map((d) => d.data() as SupplierHoliday);
+
+  // Check customer holidays
+  const custHolidaysCol = collection(db, 'users', userId, 'customerHolidays');
+  const custHolSnap = await getDocs(
+    query(custHolidaysCol, where('customerId', '==', customer.id))
+  );
+  const customerHolidayDates = new Set<string>();
+  custHolSnap.docs.forEach((d) => {
+    const hd = d.data().holidayDate;
+    if (hd) customerHolidayDates.add(hd);
+  });
+
+  // Query existing deliveries for this customer
+  // to prevent duplicates and prevent overwriting existing valid records or manual edits
+  const existingSnap = await getDocs(
+    query(delCol, where('customerId', '==', customer.id))
+  );
+  const existingDeliveryMap = new Map<string, Delivery>();
+  existingSnap.forEach((d) => {
+    const data = d.data() as Delivery;
+    if (data.deliveryDate >= startDate && data.deliveryDate <= today) {
+      existingDeliveryMap.set(data.deliveryDate, data);
+    }
+  });
+
+  // Calculate morning, evening, and daily quantities
+  let mQty = customer.morningQuantity;
+  let eQty = customer.eveningQuantity;
+  if (mQty === undefined && eQty === undefined) {
+    if (customer.deliveryTime === 'evening') {
+      mQty = 0;
+      eQty = customer.defaultDailyQuantity;
+    } else if (customer.deliveryTime === 'both') {
+      mQty = Number((customer.defaultDailyQuantity / 2).toFixed(2));
+      eQty = Number((customer.defaultDailyQuantity - mQty).toFixed(2));
+    } else {
+      mQty = customer.defaultDailyQuantity;
+      eQty = 0;
+    }
+  } else {
+    mQty = mQty || 0;
+    eQty = eQty || 0;
+  }
+
+  const dailyQty = (mQty + eQty) > 0 ? (mQty + eQty) : (customer.defaultDailyQuantity || 0);
+  const price = customer.pricePerLiter;
+
+  let batch = writeBatch(db);
   let batchCount = 0;
   const createdDeliveries: Delivery[] = [];
-  const affectedMonths = new Set<string>(); // "YYYY-M"
+  const affectedMonths = new Map<string, { year: number; month: number }>();
 
   for (const d of dates) {
+    const [yStr, mStr] = d.split('-');
+    const y = parseInt(yStr, 10);
+    const m = parseInt(mStr, 10);
+    const monthKey = `${y}-${m < 10 ? '0' + m : m}`;
+    if (!affectedMonths.has(monthKey)) {
+      affectedMonths.set(monthKey, { year: y, month: m });
+    }
+
+    const existing = existingDeliveryMap.get(d);
+    if (existing) {
+      // If the existing entry was manually edited or has holiday status or already has valid non-zero data, preserve it!
+      if (
+        existing.manuallyEdited ||
+        existing.status === 'customer_holiday' ||
+        existing.status === 'supplier_holiday' ||
+        (existing.actualQuantity > 0 && existing.pricePerLiter > 0)
+      ) {
+        createdDeliveries.push(existing);
+        continue;
+      }
+    }
+
+    // Check if supplier holiday applies for date d
+    const isSupHoliday = supplierHolidays.some(
+      (sh) => sh.startDate && sh.endDate && d >= sh.startDate && d <= sh.endDate
+    );
+
+    // Check if customer holiday applies for date d
+    const isCustHoliday = customerHolidayDates.has(d);
+
     const docId = getDeliveryDocId(customer.id, d);
     const docRef = doc(delCol, docId);
 
-    // For previous days (d < today), actualQuantity is 0 (pending milk quantity)
-    // For today (d === today), actualQuantity is 0 (or defaultDailyQuantity if specified)
-    const isToday = d === today;
-    const actualQuantity = isToday ? (customer.defaultDailyQuantity || 0) : 0;
-    const amount = Number((actualQuantity * customer.pricePerLiter).toFixed(2));
+    let actualQuantity = dailyQty;
+    let status: DeliveryStatus = 'delivered';
+    let morningForDay = mQty;
+    let eveningForDay = eQty;
+
+    if (isSupHoliday) {
+      actualQuantity = 0;
+      morningForDay = 0;
+      eveningForDay = 0;
+      status = 'supplier_holiday';
+    } else if (isCustHoliday) {
+      actualQuantity = 0;
+      morningForDay = 0;
+      eveningForDay = 0;
+      status = 'customer_holiday';
+    }
+
+    const amount = Number((actualQuantity * price).toFixed(2));
 
     const delivery: Delivery = {
       id: docId,
       customerId: customer.id,
       customerName: customer.name,
       deliveryDate: d,
-      defaultQuantity: customer.defaultDailyQuantity || 0,
+      defaultQuantity: dailyQty,
+      morningQuantity: morningForDay,
+      eveningQuantity: eveningForDay,
       actualQuantity,
-      pricePerLiter: customer.pricePerLiter,
+      pricePerLiter: price,
       amount,
-      status: 'delivered',
+      status,
       manuallyEdited: false,
-      createdAt: now,
+      createdAt: existing?.createdAt || now,
       updatedAt: now,
     };
 
@@ -393,22 +519,30 @@ export async function accountForPastDeliveries(
     batchCount++;
     createdDeliveries.push(delivery);
 
-    const [yStr, mStr] = d.split('-');
-    affectedMonths.add(`${parseInt(yStr, 10)}-${parseInt(mStr, 10)}`);
+    // Batch chunking to respect Firestore limit of 500 writes
+    if (batchCount >= 400) {
+      await batch.commit();
+      batch = writeBatch(db);
+      batchCount = 0;
+    }
   }
 
   if (batchCount > 0) {
     await batch.commit();
   }
 
-  // Recalculate monthly bills for affected months
-  for (const mKey of affectedMonths) {
-    const [year, month] = mKey.split('-').map(Number);
+  // Recalculate monthly bills for affected months in CHRONOLOGICAL ORDER
+  // so that previousBalance rolls forward correctly from month to month!
+  const sortedMonths = Array.from(affectedMonths.values()).sort(
+    (a, b) => a.year * 12 + a.month - (b.year * 12 + b.month)
+  );
+
+  for (const { year, month } of sortedMonths) {
     try {
       const { generateMonthlyBill } = await import('./billingService');
       await generateMonthlyBill(customer.id, month, year);
-    } catch {
-      // Non-fatal
+    } catch (billErr) {
+      console.warn(`Could not generate monthly bill for ${year}-${month}:`, billErr);
     }
   }
 

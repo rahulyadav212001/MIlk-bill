@@ -1,6 +1,6 @@
 export type MilkSession = 'morning' | 'afternoon' | 'evening';
 
-export type MilkDeliveryTime = 'morning' | 'afternoon' | 'evening';
+export type MilkDeliveryTime = 'morning' | 'afternoon' | 'evening' | 'both';
 
 export type MilkCategory = 'buffalo' | 'cow';
 
@@ -198,8 +198,10 @@ export interface Customer {
   milkCategory?: MilkCategory; // 'buffalo' | 'cow'
   location?: string; // address or area
   defaultDailyQuantity: number; // in Liters
+  morningQuantity?: number; // Litres in morning
+  eveningQuantity?: number; // Litres in evening
   pricePerLiter: number; // in ₹
-  deliveryTime?: MilkDeliveryTime; // 'morning' | 'afternoon' | 'evening'
+  deliveryTime?: MilkDeliveryTime; // 'morning' | 'afternoon' | 'evening' | 'both'
   deliveryStartDate: string; // YYYY-MM-DD
   deliveryStopDate?: string | null; // YYYY-MM-DD (optional, inclusive)
   isActive: boolean;
@@ -214,6 +216,8 @@ export interface Delivery {
   deliveryDate: string; // YYYY-MM-DD
   date?: string; // backwards compatibility alias
   defaultQuantity: number;
+  morningQuantity?: number;
+  eveningQuantity?: number;
   actualQuantity: number;
   pricePerLiter: number;
   amount: number; // actualQuantity * pricePerLiter

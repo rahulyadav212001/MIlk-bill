@@ -33,6 +33,8 @@ export async function getCustomers(onlyActive: boolean = false): Promise<Custome
       milkCategory: (data.milkCategory as MilkCategory) || 'buffalo',
       location: data.location || '',
       defaultDailyQuantity: data.defaultDailyQuantity || 0,
+      morningQuantity: data.morningQuantity !== undefined ? Number(data.morningQuantity) : undefined,
+      eveningQuantity: data.eveningQuantity !== undefined ? Number(data.eveningQuantity) : undefined,
       pricePerLiter: data.pricePerLiter || 0,
       deliveryTime: (data.deliveryTime as MilkDeliveryTime) || 'morning',
       deliveryStartDate: data.deliveryStartDate || getTodayKolkata(),
@@ -60,6 +62,8 @@ export async function getCustomerById(customerId: string): Promise<Customer | nu
       milkCategory: (data.milkCategory as MilkCategory) || 'buffalo',
       location: data.location || '',
       defaultDailyQuantity: data.defaultDailyQuantity || 0,
+      morningQuantity: data.morningQuantity !== undefined ? Number(data.morningQuantity) : undefined,
+      eveningQuantity: data.eveningQuantity !== undefined ? Number(data.eveningQuantity) : undefined,
       pricePerLiter: data.pricePerLiter || 0,
       deliveryTime: (data.deliveryTime as MilkDeliveryTime) || 'morning',
       deliveryStartDate: data.deliveryStartDate || getTodayKolkata(),
@@ -93,6 +97,8 @@ export async function addCustomer(data: {
   milkCategory: MilkCategory;
   location: string;
   defaultDailyQuantity?: number;
+  morningQuantity?: number;
+  eveningQuantity?: number;
   pricePerLiter: number;
   deliveryTime?: MilkDeliveryTime;
   deliveryStartDate?: string;
@@ -103,7 +109,16 @@ export async function addCustomer(data: {
   const trimmedPhone = data.phone.trim();
   const trimmedLocation = (data.location || '').trim();
   const milkCategory = data.milkCategory;
-  const qty = data.defaultDailyQuantity !== undefined ? Number(data.defaultDailyQuantity) : 0;
+  const morningQty = data.morningQuantity !== undefined ? Number(data.morningQuantity) : undefined;
+  const eveningQty = data.eveningQuantity !== undefined ? Number(data.eveningQuantity) : undefined;
+  let qty = data.defaultDailyQuantity !== undefined ? Number(data.defaultDailyQuantity) : 0;
+
+  if (morningQty !== undefined || eveningQty !== undefined) {
+    const sum = Number(((morningQty || 0) + (eveningQty || 0)).toFixed(2));
+    if (sum > 0) {
+      qty = sum;
+    }
+  }
   const price = Number(data.pricePerLiter);
 
   if (!trimmedName) throw new Error('Customer name is required.');
@@ -128,6 +143,15 @@ export async function addCustomer(data: {
     throw new Error(`A customer with phone number ${trimmedPhone} already exists.`);
   }
 
+  let deliveryTime: MilkDeliveryTime = data.deliveryTime || 'morning';
+  if ((morningQty || 0) > 0 && (eveningQty || 0) > 0) {
+    deliveryTime = 'both';
+  } else if ((eveningQty || 0) > 0 && (morningQty || 0) === 0) {
+    deliveryTime = 'evening';
+  } else if ((morningQty || 0) > 0 && (eveningQty || 0) === 0) {
+    deliveryTime = 'morning';
+  }
+
   const colRef = getCustomersCollection(userId);
   const newDocRef = doc(colRef);
   const now = Date.now();
@@ -140,8 +164,10 @@ export async function addCustomer(data: {
     milkCategory,
     location: trimmedLocation,
     defaultDailyQuantity: qty,
+    morningQuantity: morningQty,
+    eveningQuantity: eveningQty,
     pricePerLiter: price,
-    deliveryTime: data.deliveryTime || 'morning',
+    deliveryTime,
     deliveryStartDate: startDate,
     deliveryStopDate: data.deliveryStopDate || null,
     isActive: true,
@@ -183,10 +209,20 @@ export async function updateCustomer(
     throw new Error('Customer location is required.');
   }
 
-  await updateDoc(docRef, {
+  const updatePayload: any = {
     ...data,
     updatedAt: Date.now(),
-  });
+  };
+
+  if (data.morningQuantity !== undefined || data.eveningQuantity !== undefined) {
+    const m = data.morningQuantity !== undefined ? Number(data.morningQuantity) : 0;
+    const e = data.eveningQuantity !== undefined ? Number(data.eveningQuantity) : 0;
+    if (data.defaultDailyQuantity === undefined && (m > 0 || e > 0)) {
+      updatePayload.defaultDailyQuantity = Number((m + e).toFixed(2));
+    }
+  }
+
+  await updateDoc(docRef, updatePayload);
 
   if (data.deliveryStartDate) {
     try {

@@ -1,9 +1,10 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   RefreshControl,
@@ -93,12 +94,35 @@ export default function CustomersScreen() {
   const [custMilkCategory, setCustMilkCategory] = useState<MilkCategory>('buffalo');
   const [custStartDate, setCustStartDate] = useState(getTodayKolkata());
   const [custQuantityStr, setCustQuantityStr] = useState('1');
-  const [custPriceStr, setCustPriceStr] = useState('30');
+  const [custMorningQtyStr, setCustMorningQtyStr] = useState('1');
+  const [custEveningQtyStr, setCustEveningQtyStr] = useState('0');
+  const [custPriceStr, setCustPriceStr] = useState('60');
   const [custDeliveryTime, setCustDeliveryTime] = useState<MilkDeliveryTime>('morning');
   const [savingCust, setSavingCust] = useState(false);
   const [custError, setCustError] = useState('');
   const addCustScrollRef = useRef<any>(null);
   const flatListRef = useRef<FlatList<Customer>>(null);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const showSub = Keyboard.addListener(showEvent, (e) => {
+      setIsKeyboardVisible(true);
+      setKeyboardHeight(e.endCoordinates.height);
+    });
+    const hideSub = Keyboard.addListener(hideEvent, () => {
+      setIsKeyboardVisible(false);
+      setKeyboardHeight(0);
+    });
+
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // Direct Quantity Edit Modal
   const [qtyModalVisible, setQtyModalVisible] = useState(false);
@@ -207,7 +231,9 @@ export default function CustomersScreen() {
     setCustMilkCategory('buffalo');
     setCustStartDate(getTodayKolkata());
     setCustQuantityStr('1');
-    setCustPriceStr('30');
+    setCustMorningQtyStr('1');
+    setCustEveningQtyStr('0');
+    setCustPriceStr('60');
     setCustDeliveryTime('morning');
     setCustError('');
     setAddModalVisible(true);
@@ -226,7 +252,24 @@ export default function CustomersScreen() {
         : '1'
     );
     setCustPriceStr(cust.pricePerLiter.toString());
-    setCustDeliveryTime(cust.deliveryTime === 'evening' ? 'evening' : 'morning');
+    const totalQty = parseFloat(custQuantityStr) || cust.defaultDailyQuantity || 1;
+    let mQty = cust.morningQuantity;
+    let eQty = cust.eveningQuantity;
+    if (mQty === undefined && eQty === undefined) {
+      if (cust.deliveryTime === 'evening') {
+        mQty = 0;
+        eQty = totalQty;
+      } else if (cust.deliveryTime === 'both') {
+        mQty = Number((totalQty / 2).toFixed(2));
+        eQty = Number((totalQty - mQty).toFixed(2));
+      } else {
+        mQty = totalQty;
+        eQty = 0;
+      }
+    }
+    setCustMorningQtyStr((mQty ?? 0).toString());
+    setCustEveningQtyStr((eQty ?? 0).toString());
+    setCustDeliveryTime(cust.deliveryTime || 'morning');
     setCustError('');
     setAddModalVisible(true);
   };
@@ -253,6 +296,74 @@ export default function CustomersScreen() {
     );
   };
 
+  const handleMorningQtyChange = (val: string) => {
+    setCustMorningQtyStr(val);
+    setCustError('');
+    const m = parseFloat(val) || 0;
+    const e = parseFloat(custEveningQtyStr) || 0;
+    const total = Number((m + e).toFixed(2));
+    setCustQuantityStr(total > 0 ? total.toString() : val);
+    if (m > 0 && e > 0) {
+      setCustDeliveryTime('both');
+    } else if (m > 0 && e === 0) {
+      setCustDeliveryTime('morning');
+    } else if (m === 0 && e > 0) {
+      setCustDeliveryTime('evening');
+    }
+  };
+
+  const handleEveningQtyChange = (val: string) => {
+    setCustEveningQtyStr(val);
+    setCustError('');
+    const m = parseFloat(custMorningQtyStr) || 0;
+    const e = parseFloat(val) || 0;
+    const total = Number((m + e).toFixed(2));
+    setCustQuantityStr(total > 0 ? total.toString() : val);
+    if (m > 0 && e > 0) {
+      setCustDeliveryTime('both');
+    } else if (m > 0 && e === 0) {
+      setCustDeliveryTime('morning');
+    } else if (m === 0 && e > 0) {
+      setCustDeliveryTime('evening');
+    }
+  };
+
+  const handleTotalQuantityChange = (val: string) => {
+    setCustQuantityStr(val);
+    setCustError('');
+    const num = parseFloat(val) || 0;
+    if (custDeliveryTime === 'morning') {
+      setCustMorningQtyStr(val);
+      setCustEveningQtyStr('0');
+    } else if (custDeliveryTime === 'evening') {
+      setCustMorningQtyStr('0');
+      setCustEveningQtyStr(val);
+    } else if (custDeliveryTime === 'both') {
+      const half = Number((num / 2).toFixed(2));
+      const otherHalf = Number((num - half).toFixed(2));
+      setCustMorningQtyStr(half > 0 ? half.toString() : '0');
+      setCustEveningQtyStr(otherHalf > 0 ? otherHalf.toString() : '0');
+    }
+  };
+
+  const handleDeliveryTimeChange = (sched: MilkDeliveryTime) => {
+    setCustDeliveryTime(sched);
+    const total = parseFloat(custQuantityStr) || 1;
+    if (sched === 'morning') {
+      setCustMorningQtyStr(total.toString());
+      setCustEveningQtyStr('0');
+    } else if (sched === 'evening') {
+      setCustMorningQtyStr('0');
+      setCustEveningQtyStr(total.toString());
+    } else if (sched === 'both') {
+      const half = Number((total / 2).toFixed(2));
+      const otherHalf = Number((total - half).toFixed(2));
+      setCustMorningQtyStr(half > 0 ? half.toString() : '1');
+      setCustEveningQtyStr(otherHalf > 0 ? otherHalf.toString() : '1');
+      setCustQuantityStr((half + otherHalf > 0 ? half + otherHalf : 2).toString());
+    }
+  };
+
   const handleSaveCustomer = async () => {
     if (!custName.trim()) {
       setCustError('Customer name is required.');
@@ -277,9 +388,14 @@ export default function CustomersScreen() {
       setCustError('Please enter a valid start date (YYYY-MM-DD).');
       return;
     }
-    const newCustQty = parseFloat(custQuantityStr);
+    const morningQty = parseFloat(custMorningQtyStr) || 0;
+    const eveningQty = parseFloat(custEveningQtyStr) || 0;
+    let newCustQty = parseFloat(custQuantityStr) || 0;
+    if (morningQty > 0 || eveningQty > 0) {
+      newCustQty = Number((morningQty + eveningQty).toFixed(2));
+    }
     if (isNaN(newCustQty) || newCustQty <= 0) {
-      setCustError('How Many Litres of Milk must be greater than 0 (e.g. 1.5 Litres).');
+      setCustError('Milk quantity must be greater than 0 (e.g. 1 Litre).');
       return;
     }
     const newCustPrice = parseFloat(custPriceStr) || 0;
@@ -300,6 +416,8 @@ export default function CustomersScreen() {
           milkCategory: custMilkCategory,
           pricePerLiter: newCustPrice,
           defaultDailyQuantity: newCustQty,
+          morningQuantity: morningQty,
+          eveningQuantity: eveningQty,
           deliveryTime: custDeliveryTime,
           deliveryStartDate: cleanStartDate,
         });
@@ -311,6 +429,8 @@ export default function CustomersScreen() {
           milkCategory: custMilkCategory,
           pricePerLiter: newCustPrice,
           defaultDailyQuantity: newCustQty,
+          morningQuantity: morningQty,
+          eveningQuantity: eveningQty,
           deliveryTime: custDeliveryTime,
           deliveryStartDate: cleanStartDate,
         });
@@ -750,7 +870,9 @@ export default function CustomersScreen() {
               <Text style={styles.specText}>
                 Delivery:{' '}
                 <Text style={styles.boldText}>
-                  {item.deliveryTime === 'evening'
+                  {item.deliveryTime === 'both'
+                    ? '🌅 & 🌇 Both'
+                    : item.deliveryTime === 'evening'
                     ? '🌇 Evening'
                     : item.deliveryTime === 'afternoon'
                       ? '☀️ Afternoon'
@@ -764,7 +886,9 @@ export default function CustomersScreen() {
           <View style={{ display: 'none' }}>
             <View style={styles.timeBadgeBox}>
               <Text style={styles.timeBadgeText}>
-                {item.deliveryTime === 'evening'
+                {item.deliveryTime === 'both'
+                  ? '🌅 & 🌇 Both'
+                  : item.deliveryTime === 'evening'
                   ? '🌇 Evening'
                   : item.deliveryTime === 'afternoon'
                     ? '☀️ Afternoon'
@@ -1065,10 +1189,14 @@ export default function CustomersScreen() {
         <Modal
           visible={addModalVisible}
           onDismiss={() => setAddModalVisible(false)}
-          contentContainerStyle={styles.addCustomerModalContent}
+          contentContainerStyle={[
+            styles.addCustomerModalContent,
+            isKeyboardVisible && { maxHeight: '96%', marginVertical: 8 },
+          ]}
         >
           <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
             style={styles.keyboardAvoidingView}
           >
             <View style={styles.addCustomerModalHeader}>
@@ -1093,7 +1221,14 @@ export default function CustomersScreen() {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps="handled"
               style={styles.addCustomerScrollView}
-              contentContainerStyle={styles.addCustomerScrollContent}
+              contentContainerStyle={[
+                styles.addCustomerScrollContent,
+                {
+                  paddingBottom: isKeyboardVisible
+                    ? Math.max(keyboardHeight > 0 ? keyboardHeight - 100 : 160, 160)
+                    : 24,
+                },
+              ]}
             >
               {/* Field 1: Customer Name */}
               <TextInput
@@ -1186,25 +1321,31 @@ export default function CustomersScreen() {
                 />
               </TouchableOpacity>
 
-              {/* Field 6: How Many Litres of Milk? */}
+              {/* Field 7: Milk Quantity (Litres) */}
               <TextInput
-                label="How Many Litres of Milk? *"
+                label="Milk Quantity (Litres) *"
                 value={custQuantityStr}
                 onChangeText={(t) => {
-                  setCustQuantityStr(t);
+                  handleTotalQuantityChange(t);
                   setCustError('');
                 }}
                 mode="outlined"
                 keyboardType="decimal-pad"
                 style={styles.input}
-                placeholder="e.g. 1.5"
+                placeholder="e.g. 1"
                 left={<TextInput.Icon icon="cup-water" />}
+                onFocus={() => {
+                  setTimeout(() => {
+                    addCustScrollRef.current?.scrollTo({ y: 240, animated: true });
+                  }, 150);
+                }}
                 right={<TextInput.Affix text="Litres" />}
+
               />
 
-              {/* Field 7: Milk Price (per litre) */}
+              {/* Field 6: Milk Price Per Litre */}
               <TextInput
-                label="Milk Price (per litre) *"
+                label="Milk Price Per Litre *"
                 value={custPriceStr}
                 onChangeText={(t) => {
                   setCustPriceStr(t);
@@ -1213,24 +1354,67 @@ export default function CustomersScreen() {
                 mode="outlined"
                 keyboardType="decimal-pad"
                 style={styles.input}
-                placeholder="e.g. 30"
+                placeholder="e.g. 60"
                 left={<TextInput.Icon icon="currency-inr" />}
                 right={<TextInput.Affix text="₹/L" />}
+                onFocus={() => {
+                  setTimeout(() => {
+                    addCustScrollRef.current?.scrollTo({ y: 200, animated: true });
+                  }, 150);
+                }}
               />
 
-              {/* Field 8: Milk Delivery Time */}
+              {/* Field 8: Milk Schedule (Morning / Evening) */}
               <View style={styles.timeSection}>
-                <Text style={styles.fieldLabel}>Milk Delivery Time *</Text>
+                <Text style={styles.fieldLabel}>Milk Schedule (Morning / Evening) *</Text>
                 <SegmentedButtons
                   value={custDeliveryTime}
-                  onValueChange={(v) => setCustDeliveryTime(v as MilkDeliveryTime)}
+                  onValueChange={(v) => handleDeliveryTimeChange(v as MilkDeliveryTime)}
                   buttons={[
                     { value: 'morning', label: '🌅 Morning', showSelectedCheck: true },
                     { value: 'evening', label: '🌇 Evening', showSelectedCheck: true },
+                    { value: 'both', label: '🔄 Both', showSelectedCheck: true },
                   ]}
                   style={styles.timeSegmented}
                 />
               </View>
+              {/* Field 9: Morning Milk Quantity */}
+              <TextInput
+                label="Morning Milk Quantity *"
+                value={custMorningQtyStr}
+                onChangeText={handleMorningQtyChange}
+                mode="outlined"
+                keyboardType="decimal-pad"
+                style={styles.input}
+                placeholder="e.g. 1"
+                left={<TextInput.Icon icon="weather-sunny" />}
+                right={<TextInput.Affix text="Litres" />}
+
+                onFocus={() => {
+                  setTimeout(() => {
+                    addCustScrollRef.current?.scrollToEnd({ animated: true });
+                  }, 150);
+                }}
+              />
+
+              {/* Field 10: Evening Milk Quantity */}
+              <TextInput
+                label="Evening Milk Quantity *"
+                value={custEveningQtyStr}
+                onChangeText={handleEveningQtyChange}
+                mode="outlined"
+                keyboardType="decimal-pad"
+                style={styles.input}
+                placeholder="e.g. 0"
+                left={<TextInput.Icon icon="weather-night" />}
+                right={<TextInput.Affix text="Litres" />}
+
+                onFocus={() => {
+                  setTimeout(() => {
+                    addCustScrollRef.current?.scrollToEnd({ animated: true });
+                  }, 150);
+                }}
+              />
             </ScrollView>
 
             {/* Permanent fixed action footer - always pinned and visible above keyboard! */}

@@ -79,6 +79,8 @@ export async function getCustomerRangeAccountHistory(
       milkCategory,
       deliveryTime,
       defaultQuantity: dData.defaultQuantity || 0,
+      morningQuantity: dData.morningQuantity,
+      eveningQuantity: dData.eveningQuantity,
       actualQuantity: dData.actualQuantity !== undefined ? dData.actualQuantity : 0,
       pricePerLiter: dData.pricePerLiter || cust?.pricePerLiter || 0,
       amount: dData.amount !== undefined ? dData.amount : 0,
