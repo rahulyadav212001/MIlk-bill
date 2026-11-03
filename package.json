@@ -45,7 +45,7 @@
   "scripts": {
     "postinstall": "node scripts/patch-cmake-paths.js",
     "start": "expo start",
-    "test": "tsx scripts/verify-scenarios.ts && tsx scripts/verify-holiday-and-supplier-scenarios.ts && tsx scripts/verify-buy-sell-management.ts && tsx scripts/verify-customer-history-and-bills.ts",
+    "test": "tsx scripts/verify-scenarios.ts && tsx scripts/verify-holiday-and-supplier-scenarios.ts && tsx scripts/verify-buy-sell-management.ts && tsx scripts/verify-customer-history-and-bills.ts && tsx scripts/verify-customer-deactivation-and-final-bill.ts && tsx scripts/verify-payment-management-system.ts && tsx scripts/verify-buy-milk-keyboard.ts",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
     "ios": "expo run:ios",

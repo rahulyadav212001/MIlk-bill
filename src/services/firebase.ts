@@ -96,5 +96,23 @@ export function getCurrentUserIdSync(): string {
   return auth?.currentUser ? auth.currentUser.uid : currentUserId;
 }
 
+/**
+ * Remove all keys with `undefined` values recursively so Firestore never throws
+ * "Function setDoc() called with invalid data. Unsupported field value: undefined"
+ */
+export function cleanDocData<T extends Record<string, any>>(obj: T): Partial<T> {
+  const result: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      if (value !== null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date)) {
+        result[key] = cleanDocData(value);
+      } else {
+        result[key] = value;
+      }
+    }
+  }
+  return result;
+}
+
 export { app, auth, db };
 

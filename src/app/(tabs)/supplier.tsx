@@ -137,25 +137,36 @@ export default function SupplierScreen() {
   const [savingBuy, setSavingBuy] = useState(false);
   const [buyError, setBuyError] = useState('');
   const [buySuccess, setBuySuccess] = useState('');
-  const [isRateFocused, setIsRateFocused] = useState(false);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const buyScrollViewRef = useRef<any>(null);
 
-  // Auto-scroll to ensure focused input is visible above keyboard
+  // Auto-scroll to ensure focused input and Save Purchase button are visible above keyboard
   useEffect(() => {
-    const keyboardShowSub = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      () => {
-        if (isRateFocused) {
-          setTimeout(() => {
-            buyScrollViewRef.current?.scrollToEnd({ animated: true });
-          }, 50);
-        }
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const keyboardShowSub = Keyboard.addListener(showEvent, (e) => {
+      setIsKeyboardVisible(true);
+      const h = e.endCoordinates?.height || 0;
+      setKeyboardHeight(h);
+      if (buyModalVisible) {
+        setTimeout(() => {
+          buyScrollViewRef.current?.scrollToEnd({ animated: true });
+        }, 100);
       }
-    );
+    });
+
+    const keyboardHideSub = Keyboard.addListener(hideEvent, () => {
+      setIsKeyboardVisible(false);
+      setKeyboardHeight(0);
+    });
+
     return () => {
       keyboardShowSub.remove();
+      keyboardHideSub.remove();
     };
-  }, [isRateFocused]);
+  }, [buyModalVisible]);
 
   // Detailed Purchase Entries Modal State
   const [entriesModalVisible, setEntriesModalVisible] = useState(false);
@@ -421,6 +432,7 @@ export default function SupplierScreen() {
 
   // --- Buy Tab Handlers (Multiple Purchases per day supported) ---
   const handleOpenBuy = (supplier: Supplier) => {
+    Keyboard.dismiss();
     const isHoliday = supplierHolidays.has('ALL') || supplierHolidays.has(supplier.id);
     if (isHoliday) {
       Alert.alert(
@@ -438,7 +450,6 @@ export default function SupplierScreen() {
     setBuyPriceStr('');
     setBuyError('');
     setBuySuccess('');
-    setIsRateFocused(false);
     setBuyModalVisible(true);
   };
 
@@ -447,6 +458,7 @@ export default function SupplierScreen() {
   const buyAutoTotalAmount = Number((Math.max(0, buyNumericQty) * Math.max(0, buyNumericPrice)).toFixed(2));
 
   const handleSaveBuy = async () => {
+    Keyboard.dismiss();
     if (!buyTargetSupplier) return;
     if (buyNumericQty <= 0) {
       setBuyError('Milk quantity must be greater than 0 Litres.');
@@ -1031,20 +1043,36 @@ export default function SupplierScreen() {
         <Modal
           visible={buyModalVisible}
           onDismiss={() => {
-            setIsRateFocused(false);
+            Keyboard.dismiss();
             setBuyModalVisible(false);
           }}
-          contentContainerStyle={[styles.modalContent, styles.buyModalContainer]}
+          contentContainerStyle={[
+            styles.modalContent,
+            styles.buyModalContainer,
+            isKeyboardVisible && {
+              maxHeight: '94%',
+              marginVertical: 4,
+              marginBottom: Platform.OS === 'android' ? 10 : 20,
+            },
+          ]}
         >
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
             style={styles.keyboardAvoidingView}
           >
             <ScrollView
               ref={buyScrollViewRef}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.buyScrollContent}
+              contentContainerStyle={[
+                styles.buyScrollContent,
+                {
+                  paddingBottom: isKeyboardVisible
+                    ? Math.max(keyboardHeight > 0 ? keyboardHeight - 40 : 200, 200)
+                    : 28,
+                },
+              ]}
             >
               <View style={styles.modalHeaderRow}>
                 <View style={{ flex: 1 }}>
@@ -1057,7 +1085,6 @@ export default function SupplierScreen() {
                   icon="close"
                   size={20}
                   onPress={() => {
-                    setIsRateFocused(false);
                     setBuyModalVisible(false);
                   }}
                   accessibilityLabel="Close Milk Purchase"
@@ -1155,10 +1182,9 @@ export default function SupplierScreen() {
                   setBuyError('');
                 }}
                 onFocus={() => {
-                  setIsRateFocused(false);
                   setTimeout(() => {
-                    buyScrollViewRef.current?.scrollTo({ y: 220, animated: true });
-                  }, 150);
+                    buyScrollViewRef.current?.scrollToEnd({ animated: true });
+                  }, 120);
                 }}
                 mode="outlined"
                 keyboardType="decimal-pad"
@@ -1177,13 +1203,9 @@ export default function SupplierScreen() {
                   setBuyError('');
                 }}
                 onFocus={() => {
-                  setIsRateFocused(true);
                   setTimeout(() => {
                     buyScrollViewRef.current?.scrollToEnd({ animated: true });
-                  }, 150);
-                }}
-                onBlur={() => {
-                  setIsRateFocused(false);
+                  }, 120);
                 }}
                 mode="outlined"
                 keyboardType="decimal-pad"
@@ -1206,7 +1228,6 @@ export default function SupplierScreen() {
                 <Button
                   mode="text"
                   onPress={() => {
-                    setIsRateFocused(false);
                     setBuyModalVisible(false);
                   }}
                   disabled={savingBuy}

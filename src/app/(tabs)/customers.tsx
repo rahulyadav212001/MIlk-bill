@@ -39,6 +39,8 @@ import {
 } from '../../services/customerHistoryService';
 import {
   addCustomer,
+  calculateFinalBillPreview,
+  closeCustomerAccount,
   deleteCustomer,
   getCustomers,
   updateCustomer,
@@ -59,6 +61,7 @@ import {
   Customer,
   CustomerRangeAccountsHistory,
   Delivery,
+  FinalAccountClosingSummary,
   MilkCategory,
   MilkDeliveryTime,
 } from '../../types';
@@ -83,7 +86,18 @@ export default function CustomersScreen() {
   const [supplierHolidayActive, setSupplierHolidayActive] = useState(false);
 
   // Settings & Holiday Modal State
+  const [settingsMenuVisible, setSettingsMenuVisible] = useState(false);
   const [holidaySettingsModalVisible, setHolidaySettingsModalVisible] = useState(false);
+
+  // Close Customer Account State (TASK 1, 2, 3, 4, 5, 6, 7)
+  const [closeAccountModalVisible, setCloseAccountModalVisible] = useState(false);
+  const [closingCustomer, setClosingCustomer] = useState<Customer | null>(null);
+  const [closingDate, setClosingDate] = useState<string>(getTodayKolkata());
+  const [closingPreview, setClosingPreview] = useState<FinalAccountClosingSummary | null>(null);
+  const [loadingClosingPreview, setLoadingClosingPreview] = useState(false);
+  const [confirmCloseDialogVisible, setConfirmCloseDialogVisible] = useState(false);
+  const [submittingClose, setSubmittingClose] = useState(false);
+  const [closingError, setClosingError] = useState('');
 
   // Add/Edit Customer Modal State
   const [addModalVisible, setAddModalVisible] = useState(false);
@@ -177,7 +191,7 @@ export default function CustomersScreen() {
   // Calendar Date Picker Modal for customer history, main screen & registration
   const [calendarPickerVisible, setCalendarPickerVisible] = useState(false);
   const [calendarTargetField, setCalendarTargetField] = useState<
-    'main' | 'history_daily' | 'custom_start' | 'custom_end' | 'cust_reg'
+    'main' | 'history_daily' | 'custom_start' | 'custom_end' | 'cust_reg' | 'closing'
   >('main');
 
   // PDF generation loading
@@ -186,7 +200,7 @@ export default function CustomersScreen() {
   const loadData = useCallback(async (targetDate: string) => {
     try {
       const [custList, delList, supHoliday] = await Promise.all([
-        getCustomers(),
+        getCustomers(true),
         initializeDailyDeliveries(targetDate),
         isSupplierHoliday(targetDate),
       ]);
@@ -294,6 +308,49 @@ export default function CustomersScreen() {
         },
       ]
     );
+  };
+
+  // --- Close Customer Account Handlers ---
+  const loadClosingPreview = async (customerId: string, targetClosingDate: string) => {
+    setLoadingClosingPreview(true);
+    setClosingError('');
+    try {
+      const summary = await calculateFinalBillPreview(customerId, targetClosingDate);
+      setClosingPreview(summary);
+    } catch (err: any) {
+      setClosingError(err?.message || 'Failed to calculate final bill.');
+    } finally {
+      setLoadingClosingPreview(false);
+    }
+  };
+
+  const handleOpenCloseAccount = (cust: Customer) => {
+    setClosingCustomer(cust);
+    const today = getTodayKolkata();
+    setClosingDate(today);
+    setClosingError('');
+    setCloseAccountModalVisible(true);
+    loadClosingPreview(cust.id, today);
+  };
+
+  const handleConfirmCloseAccount = async () => {
+    if (!closingCustomer) return;
+    setSubmittingClose(true);
+    try {
+      await closeCustomerAccount(closingCustomer.id, closingDate);
+      setConfirmCloseDialogVisible(false);
+      setCloseAccountModalVisible(false);
+      setClosingCustomer(null);
+      Alert.alert(
+        'Account Closed',
+        `${closingCustomer.name}'s account has been successfully closed and moved to Deactivated Customers.`
+      );
+      await loadData(selectedDate);
+    } catch (err: any) {
+      Alert.alert('Error', err?.message || 'Failed to close customer account.');
+    } finally {
+      setSubmittingClose(false);
+    }
   };
 
   const handleMorningQtyChange = (val: string) => {
@@ -709,6 +766,22 @@ export default function CustomersScreen() {
     } else if (calendarTargetField === 'cust_reg') {
       setCustStartDate(newDate);
       setCustError('');
+    } else if (calendarTargetField === 'closing') {
+      if (closingCustomer) {
+        if (newDate < closingCustomer.deliveryStartDate) {
+          Alert.alert(
+            'Invalid Closing Date',
+            `Closing date cannot be earlier than customer joining date (${formatDisplayDate(closingCustomer.deliveryStartDate)}).`
+          );
+          return;
+        }
+        if (newDate > getTodayKolkata()) {
+          Alert.alert('Invalid Closing Date', 'Closing date cannot be in the future.');
+          return;
+        }
+        setClosingDate(newDate);
+        loadClosingPreview(closingCustomer.id, newDate);
+      }
     }
   };
 
@@ -826,6 +899,13 @@ export default function CustomersScreen() {
             </View>
 
             <View style={styles.badgeRow}>
+              <IconButton
+                icon="account-off-outline"
+                size={18}
+                iconColor="#D97706"
+                accessibilityLabel="Close Account"
+                onPress={() => handleOpenCloseAccount(item)}
+              />
               <IconButton
                 icon="pencil-outline"
                 size={18}
@@ -1039,8 +1119,8 @@ export default function CustomersScreen() {
     <View style={styles.container}>
       <HeaderBar
         title="Customers"
-        subtitle={`${customers.length} Registered Customers`}
-        onSettingsPress={() => setHolidaySettingsModalVisible(true)}
+        subtitle={`${customers.length} Active Customers`}
+        onSettingsPress={() => setSettingsMenuVisible(true)}
       />
 
       {/* Top Main Action Buttons */}
@@ -2191,6 +2271,438 @@ export default function CustomersScreen() {
         </Modal>
       </Portal>
 
+      {/* Settings Options Modal (Holidays & Deactivated Customers - TASK 8) */}
+      <Portal>
+        <Modal
+          visible={settingsMenuVisible}
+          onDismiss={() => setSettingsMenuVisible(false)}
+          contentContainerStyle={styles.settingsMenuModal}
+        >
+          <View style={styles.settingsMenuHeader}>
+            <View style={styles.settingsHeaderIconBox}>
+              <MaterialCommunityIcons name="cog" size={22} color={BrandColors.primaryDark} />
+            </View>
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={styles.settingsMenuTitle}>Settings & Management</Text>
+              <Text style={styles.settingsMenuSubtitle}>Manage holidays and customer accounts</Text>
+            </View>
+            <IconButton
+              icon="close"
+              size={20}
+              onPress={() => setSettingsMenuVisible(false)}
+            />
+          </View>
+
+          <Divider style={{ marginVertical: 10 }} />
+
+          {/* Option 1: Holidays */}
+          <TouchableOpacity
+            style={styles.settingsOptionCard}
+            activeOpacity={0.7}
+            onPress={() => {
+              setSettingsMenuVisible(false);
+              setHolidaySettingsModalVisible(true);
+            }}
+          >
+            <View style={[styles.settingsOptionIconBox, { backgroundColor: '#FEF3C7' }]}>
+              <MaterialCommunityIcons name="calendar-clock" size={24} color="#D97706" />
+            </View>
+            <View style={styles.settingsOptionContent}>
+              <Text style={styles.settingsOptionTitle}>1. Holidays</Text>
+              <Text style={styles.settingsOptionDesc}>
+                Manage Customer & Supplier holidays and pause deliveries
+              </Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color="#94A3B8" />
+          </TouchableOpacity>
+
+          {/* Option 2: Deactivated Customers */}
+          <TouchableOpacity
+            style={styles.settingsOptionCard}
+            activeOpacity={0.7}
+            onPress={() => {
+              setSettingsMenuVisible(false);
+              router.push('/customer/deactivated');
+            }}
+          >
+            <View style={[styles.settingsOptionIconBox, { backgroundColor: '#FEE2E2' }]}>
+              <MaterialCommunityIcons name="account-off-outline" size={24} color={BrandColors.danger} />
+            </View>
+            <View style={styles.settingsOptionContent}>
+              <Text style={styles.settingsOptionTitle}>2. Deactivated Customers</Text>
+              <Text style={styles.settingsOptionDesc}>
+                View closed accounts, final bills, history & pending balances
+              </Text>
+            </View>
+            <MaterialCommunityIcons name="chevron-right" size={20} color="#94A3B8" />
+          </TouchableOpacity>
+        </Modal>
+      </Portal>
+
+      {/* Close Customer Account Modal (TASK 2, 3, 4, 6) */}
+      <Portal>
+        <Modal
+          visible={closeAccountModalVisible}
+          onDismiss={() => {
+            if (!submittingClose) setCloseAccountModalVisible(false);
+          }}
+          contentContainerStyle={styles.closeModalContainer}
+        >
+          <ScrollView showsVerticalScrollIndicator={false}>
+            <View style={styles.closeModalHeader}>
+              <View style={styles.closeHeaderIconBox}>
+                <MaterialCommunityIcons name="account-cancel-outline" size={24} color="#D97706" />
+              </View>
+              <View style={{ flex: 1, marginLeft: 10 }}>
+                <Text style={styles.closeModalTitle}>Close Customer Account</Text>
+                <Text style={styles.closeModalSubtitle}>
+                  Calculate final bill and deactivate {closingCustomer?.name}
+                </Text>
+              </View>
+              <IconButton
+                icon="close"
+                size={20}
+                onPress={() => setCloseAccountModalVisible(false)}
+                disabled={submittingClose}
+              />
+            </View>
+
+            {closingError ? (
+              <HelperText type="error" visible>
+                {closingError}
+              </HelperText>
+            ) : null}
+
+            {closingCustomer && (
+              <>
+                {/* 1. Dates Section: Two Dates (Joining Date & Closing Date) */}
+                <View style={styles.closeCustDetailsCard}>
+                  <Text style={styles.closeSectionTitle}>Customer & Date Details</Text>
+                  <View style={styles.closeDetailRow}>
+                    <Text style={styles.closeDetailLabel}>Customer Name:</Text>
+                    <Text style={styles.closeDetailValue}>{closingCustomer.name}</Text>
+                  </View>
+                  <View style={styles.closeDetailRow}>
+                    <Text style={styles.closeDetailLabel}>Phone Number:</Text>
+                    <Text style={styles.closeDetailValue}>📞 {closingCustomer.phone}</Text>
+                  </View>
+                  <View style={styles.closeDetailRow}>
+                    <Text style={styles.closeDetailLabel}>Milk Category:</Text>
+                    <Text style={styles.closeDetailValue}>
+                      {closingCustomer.milkCategory === 'cow' ? '🐄 Cow Milk' : '🐃 Buffalo Milk'}
+                    </Text>
+                  </View>
+                  <View style={styles.closeDetailRow}>
+                    <Text style={styles.closeDetailLabel}>Rate & Quantity:</Text>
+                    <Text style={styles.closeDetailValue}>
+                      ₹{closingCustomer.pricePerLiter}/L • {closingCustomer.defaultDailyQuantity} L/day
+                    </Text>
+                  </View>
+
+                  <Divider style={{ marginVertical: 8 }} />
+
+                  {/* Date 1: Customer Joining Date (Read-only) */}
+                  <View style={styles.joiningDateBox}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1 }}>
+                      <MaterialCommunityIcons name="calendar-lock" size={20} color={BrandColors.primaryDark} />
+                      <View>
+                        <Text style={styles.dateFieldLabel}>Date 1: Customer Joining Date</Text>
+                        <Text style={styles.joiningDateValue}>
+                          {formatDisplayDate(closingCustomer.deliveryStartDate)}
+                        </Text>
+                      </View>
+                    </View>
+                    <View style={styles.readOnlyBadge}>
+                      <Text style={styles.readOnlyBadgeText}>Read-only</Text>
+                    </View>
+                  </View>
+
+                  {/* Date 2: Account Closing Date (Selectable) */}
+                  <View style={styles.closingDateSection}>
+                    <Text style={styles.dateFieldLabel}>Date 2: Account Closing Date *</Text>
+                    <TouchableOpacity
+                      style={styles.closingDateBox}
+                      activeOpacity={0.7}
+                      onPress={() => {
+                        setCalendarTargetField('closing');
+                        setCalendarPickerVisible(true);
+                      }}
+                    >
+                      <View style={styles.closingDateLeft}>
+                        <MaterialCommunityIcons name="calendar-remove" size={20} color="#D97706" />
+                        <Text style={styles.closingDateText}>{formatDisplayDate(closingDate)}</Text>
+                      </View>
+                      <View style={styles.changeDateBtn}>
+                        <Text style={styles.changeDateBtnText}>Select Date 📅</Text>
+                      </View>
+                    </TouchableOpacity>
+                    <Text style={styles.closingDateHint}>
+                      Allowed from joining date ({formatDisplayDate(closingCustomer.deliveryStartDate)}) up to today.
+                    </Text>
+                  </View>
+                </View>
+
+                {/* 2. Active Billing Period Banner */}
+                {closingPreview && (
+                  <View style={styles.cycleBanner}>
+                    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 8 }}>
+                      <MaterialCommunityIcons name="calendar-sync" size={22} color={BrandColors.secondary} />
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.cycleBannerTitle}>
+                          Current Billing Period: {closingPreview.billingPeriodLabel}
+                        </Text>
+                        <Text style={styles.cycleBannerSubtitle}>
+                          {closingPreview.completedBillingMonthsCount > 0
+                            ? closingPreview.isPreviousMonthPaid
+                              ? `✓ Previous billing month (${closingPreview.lastCompletedMonthLabel}) is fully paid and excluded from this bill.`
+                              : `⚠️ Prior bill (${closingPreview.lastCompletedMonthLabel}) has unpaid balance of ₹${closingPreview.previousBalance}.`
+                            : 'Initial customer billing cycle.'}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                {/* 3. Applicable Milk Entries for Current Cycle Only */}
+                {loadingClosingPreview ? (
+                  <View style={{ paddingVertical: 20, alignItems: 'center' }}>
+                    <LoadingIndicator message="Calculating billing cycle entries..." />
+                  </View>
+                ) : closingPreview ? (
+                  <>
+                    <View style={styles.entriesTableCard}>
+                      <Text style={styles.closeSectionTitle}>Applicable Daily Entries (Current Cycle Only)</Text>
+                      <View style={styles.tableHeaderRow}>
+                        <Text style={[styles.tableColHeader, { flex: 2 }]}>Date</Text>
+                        <Text style={[styles.tableColHeader, { flex: 1.5, textAlign: 'center' }]}>Milk Qty</Text>
+                        <Text style={[styles.tableColHeader, { flex: 1, textAlign: 'center' }]}>Rate</Text>
+                        <Text style={[styles.tableColHeader, { flex: 1.5, textAlign: 'right' }]}>Amount</Text>
+                      </View>
+                      <Divider style={{ marginVertical: 4 }} />
+                      {closingPreview.currentCycleDeliveries.length === 0 ? (
+                        <Text style={{ textAlign: 'center', color: '#64748B', paddingVertical: 8, fontSize: 13 }}>
+                          No milk deliveries recorded in this billing period.
+                        </Text>
+                      ) : (
+                        closingPreview.currentCycleDeliveries.map((del, idx) => (
+                          <View key={del.id || idx} style={styles.tableDataRow}>
+                            <Text style={[styles.tableCell, { flex: 2 }]} numberOfLines={1}>
+                              {formatDisplayDate(del.deliveryDate)}
+                            </Text>
+                            <Text style={[styles.tableCell, { flex: 1.5, textAlign: 'center' }]}>
+                              {del.status === 'customer_holiday' || del.status === 'supplier_holiday'
+                                ? '🏖️ 0 L'
+                                : `${del.actualQuantity} L`}
+                            </Text>
+                            <Text style={[styles.tableCell, { flex: 1, textAlign: 'center' }]}>
+                              ₹{del.pricePerLiter}
+                            </Text>
+                            <Text style={[styles.tableCell, { flex: 1.5, textAlign: 'right', fontWeight: '600' }]}>
+                              ₹{del.amount}
+                            </Text>
+                          </View>
+                        ))
+                      )}
+                      <Divider style={{ marginVertical: 6 }} />
+                      <View style={styles.tableTotalRow}>
+                        <Text style={styles.tableTotalLabel}>Current Cycle Total:</Text>
+                        <Text style={styles.tableTotalValue}>
+                          {closingPreview.currentCycleMilkQuantity} Litres • ₹{closingPreview.finalBillAmount}
+                        </Text>
+                      </View>
+                    </View>
+
+                    {/* 4. Final Bill & Outstanding Breakdown */}
+                    <View style={styles.calculationCard}>
+                      <Text style={styles.closeSectionTitle}>Final Bill Calculation</Text>
+                      <View style={styles.calcDetailsContainer}>
+                        <View style={styles.closeDetailRow}>
+                          <Text style={styles.closeDetailLabel}>
+                            Current Cycle Milk Bill ({closingPreview.currentCycleMilkQuantity} L):
+                          </Text>
+                          <Text style={[styles.closeDetailValue, { fontWeight: '700' }]}>
+                            ₹{closingPreview.finalBillAmount}
+                          </Text>
+                        </View>
+                        <View style={styles.closeDetailRow}>
+                          <Text style={styles.closeDetailLabel}>Previous Unpaid Balance:</Text>
+                          <Text
+                            style={[
+                              styles.closeDetailValue,
+                              closingPreview.previousBalance > 0 && { color: '#D97706', fontWeight: '700' },
+                            ]}
+                          >
+                            {closingPreview.previousBalance > 0
+                              ? `+ ₹${closingPreview.previousBalance}`
+                              : '₹0 (Fully Paid)'}
+                          </Text>
+                        </View>
+                        {closingPreview.currentMonthPayments > 0 && (
+                          <View style={styles.closeDetailRow}>
+                            <Text style={styles.closeDetailLabel}>Payments Received This Month:</Text>
+                            <Text style={[styles.closeDetailValue, { color: BrandColors.success, fontWeight: '700' }]}>
+                              - ₹{closingPreview.currentMonthPayments}
+                            </Text>
+                          </View>
+                        )}
+
+                        <Divider style={{ marginVertical: 8 }} />
+
+                        <View style={styles.closeDetailRow}>
+                          <Text style={[styles.closeDetailLabel, { fontWeight: '700', fontSize: 15 }]}>
+                            Final Outstanding Amount:
+                          </Text>
+                          <Text
+                            style={[
+                              styles.closeDetailValue,
+                              {
+                                fontWeight: '700',
+                                fontSize: 17,
+                                color: closingPreview.finalOutstandingAmount > 0 ? '#D97706' : BrandColors.success,
+                              },
+                            ]}
+                          >
+                            {closingPreview.finalOutstandingAmount > 0
+                              ? `₹${closingPreview.finalOutstandingAmount}`
+                              : '₹0 (Fully Paid)'}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+                  </>
+                ) : null}
+
+                {/* Modal Buttons */}
+                <View style={styles.closeModalActions}>
+                  <Button
+                    mode="outlined"
+                    onPress={() => setCloseAccountModalVisible(false)}
+                    style={{ flex: 1, marginRight: 8 }}
+                    disabled={submittingClose}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    mode="contained"
+                    buttonColor="#D97706"
+                    onPress={() => setConfirmCloseDialogVisible(true)}
+                    style={{ flex: 1 }}
+                    disabled={loadingClosingPreview || submittingClose}
+                  >
+                    Close Account
+                  </Button>
+                </View>
+              </>
+            )}
+          </ScrollView>
+        </Modal>
+      </Portal>
+
+      {/* Final Confirmation Dialog Before Closing (TASK 5) */}
+      <Portal>
+        <Modal
+          visible={confirmCloseDialogVisible}
+          onDismiss={() => {
+            if (!submittingClose) setConfirmCloseDialogVisible(false);
+          }}
+          contentContainerStyle={styles.confirmDialogContainer}
+        >
+          <View style={styles.confirmDialogContent}>
+            <View style={styles.confirmIconBox}>
+              <MaterialCommunityIcons name="alert-octagon-outline" size={36} color={BrandColors.danger} />
+            </View>
+            <Text style={styles.confirmDialogTitle}>Confirm Close Customer Account</Text>
+            <Text style={styles.confirmDialogSub}>
+              Are you sure you want to deactivate this customer? All milk deliveries strictly after the closing date will be stopped.
+            </Text>
+
+            <View style={styles.confirmSummaryBox}>
+              <View style={styles.closeDetailRow}>
+                <Text style={styles.closeDetailLabel}>Customer Name:</Text>
+                <Text style={styles.closeDetailValue}>{closingCustomer?.name}</Text>
+              </View>
+              <View style={styles.closeDetailRow}>
+                <Text style={styles.closeDetailLabel}>Date 1: Joining Date:</Text>
+                <Text style={styles.closeDetailValue}>{formatDisplayDate(closingCustomer?.deliveryStartDate || '')}</Text>
+              </View>
+              <View style={styles.closeDetailRow}>
+                <Text style={styles.closeDetailLabel}>Date 2: Closing Date:</Text>
+                <Text style={styles.closeDetailValue}>{formatDisplayDate(closingDate)}</Text>
+              </View>
+              <View style={styles.closeDetailRow}>
+                <Text style={styles.closeDetailLabel}>Active Billing Period:</Text>
+                <Text style={[styles.closeDetailValue, { fontWeight: '700' }]}>
+                  {closingPreview?.billingPeriodLabel}
+                </Text>
+              </View>
+              <View style={styles.closeDetailRow}>
+                <Text style={styles.closeDetailLabel}>Cycle Milk Quantity:</Text>
+                <Text style={styles.closeDetailValue}>{closingPreview?.currentCycleMilkQuantity} L</Text>
+              </View>
+              <View style={styles.closeDetailRow}>
+                <Text style={styles.closeDetailLabel}>Final Bill Amount:</Text>
+                <Text style={[styles.closeDetailValue, { fontWeight: '700' }]}>
+                  ₹{closingPreview?.finalBillAmount}
+                </Text>
+              </View>
+              {closingPreview && closingPreview.previousBalance > 0 && (
+                <View style={styles.closeDetailRow}>
+                  <Text style={styles.closeDetailLabel}>Previous Unpaid Balance:</Text>
+                  <Text style={[styles.closeDetailValue, { color: '#D97706' }]}>
+                    + ₹{closingPreview.previousBalance}
+                  </Text>
+                </View>
+              )}
+              {closingPreview && closingPreview.currentMonthPayments > 0 && (
+                <View style={styles.closeDetailRow}>
+                  <Text style={styles.closeDetailLabel}>Payments Received:</Text>
+                  <Text style={[styles.closeDetailValue, { color: BrandColors.success }]}>
+                    - ₹{closingPreview.currentMonthPayments}
+                  </Text>
+                </View>
+              )}
+              <Divider style={{ marginVertical: 6 }} />
+              <View style={styles.closeDetailRow}>
+                <Text style={[styles.closeDetailLabel, { fontWeight: '700' }]}>Remaining Outstanding:</Text>
+                <Text
+                  style={[
+                    styles.closeDetailValue,
+                    {
+                      fontWeight: '700',
+                      fontSize: 16,
+                      color: (closingPreview?.finalOutstandingAmount || 0) > 0 ? '#D97706' : BrandColors.success,
+                    },
+                  ]}
+                >
+                  ₹{closingPreview?.finalOutstandingAmount || 0}
+                </Text>
+              </View>
+            </View>
+
+            <View style={styles.confirmDialogActions}>
+              <Button
+                mode="outlined"
+                onPress={() => setConfirmCloseDialogVisible(false)}
+                disabled={submittingClose}
+                style={{ flex: 1, marginRight: 8 }}
+              >
+                Cancel
+              </Button>
+              <Button
+                mode="contained"
+                buttonColor={BrandColors.danger}
+                loading={submittingClose}
+                disabled={submittingClose}
+                onPress={handleConfirmCloseAccount}
+                style={{ flex: 1 }}
+              >
+                Confirm Close
+              </Button>
+            </View>
+          </View>
+        </Modal>
+      </Portal>
+
       {/* Calendar Date Picker Modal */}
       <CalendarDatePickerModal
         visible={calendarPickerVisible}
@@ -2203,7 +2715,9 @@ export default function CustomersScreen() {
                 ? custCustomStartDate
                 : calendarTargetField === 'custom_end'
                   ? custCustomEndDate
-                  : custStartDate
+                  : calendarTargetField === 'closing'
+                    ? closingDate
+                    : custStartDate
         }
         onSelectDate={handleCalendarDateSelected}
         onDismiss={() => setCalendarPickerVisible(false)}
@@ -2216,7 +2730,9 @@ export default function CustomersScreen() {
                 ? 'Select Custom Start Date'
                 : calendarTargetField === 'custom_end'
                   ? 'Select Custom End Date'
-                  : 'Select Milk Date'
+                  : calendarTargetField === 'closing'
+                    ? 'Select Account Closing Date'
+                    : 'Select Milk Date'
         }
         zIndex={99999}
       />
@@ -3083,5 +3599,320 @@ const styles = StyleSheet.create({
   qtyTouchBoxPending: {
     borderColor: '#F59E0B',
     backgroundColor: '#FEF3C7',
+  },
+  settingsMenuModal: {
+    backgroundColor: '#FFFFFF',
+    margin: 20,
+    borderRadius: 16,
+    padding: 18,
+  },
+  settingsMenuHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  settingsHeaderIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#E0F2FE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  settingsMenuTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: BrandColors.textLight,
+  },
+  settingsMenuSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  settingsOptionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    marginVertical: 6,
+  },
+  settingsOptionIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  settingsOptionContent: {
+    flex: 1,
+  },
+  settingsOptionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: BrandColors.textLight,
+  },
+  settingsOptionDesc: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 3,
+  },
+  closeModalContainer: {
+    backgroundColor: '#FFFFFF',
+    margin: 16,
+    borderRadius: 16,
+    padding: 18,
+    maxHeight: '90%',
+  },
+  closeModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  closeHeaderIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeModalTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: BrandColors.textLight,
+  },
+  closeModalSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+  },
+  closeCustDetailsCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  closeSectionTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: BrandColors.textLight,
+    marginBottom: 8,
+  },
+  closeDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginVertical: 3,
+  },
+  closeDetailLabel: {
+    fontSize: 13,
+    color: '#475569',
+  },
+  closeDetailValue: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: BrandColors.textLight,
+  },
+  closingDateSection: {
+    marginBottom: 14,
+  },
+  closingDateBox: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FFFBEB',
+    borderWidth: 1,
+    borderColor: '#FDE68A',
+    borderRadius: 10,
+    padding: 12,
+  },
+  closingDateLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  closingDateText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#92400E',
+  },
+  closingDateHint: {
+    fontSize: 11,
+    color: '#64748B',
+    marginTop: 4,
+    marginLeft: 2,
+  },
+  changeDateBtn: {
+    backgroundColor: '#FDE68A',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  changeDateBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#92400E',
+  },
+  calculationCard: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  calcDetailsContainer: {
+    marginTop: 4,
+  },
+  closeModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  confirmDialogContainer: {
+    backgroundColor: '#FFFFFF',
+    margin: 24,
+    borderRadius: 18,
+    padding: 20,
+  },
+  confirmDialogContent: {
+    alignItems: 'center',
+  },
+  confirmIconBox: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
+  },
+  confirmDialogTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: BrandColors.textLight,
+    textAlign: 'center',
+    marginBottom: 6,
+  },
+  confirmDialogSub: {
+    fontSize: 13,
+    color: '#64748B',
+    textAlign: 'center',
+    marginBottom: 14,
+    lineHeight: 18,
+  },
+  confirmSummaryBox: {
+    width: '100%',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  confirmDialogActions: {
+    flexDirection: 'row',
+    width: '100%',
+  },
+  joiningDateBox: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+  },
+  dateFieldLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    fontWeight: '600',
+  },
+  joiningDateValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: BrandColors.textLight,
+    marginTop: 2,
+  },
+  readOnlyBadge: {
+    backgroundColor: '#E2E8F0',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  readOnlyBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  cycleBanner: {
+    backgroundColor: '#F0FDF4',
+    borderColor: '#BBF7D0',
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 14,
+  },
+  cycleBannerTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#166534',
+  },
+  cycleBannerSubtitle: {
+    fontSize: 12,
+    color: '#15803D',
+    marginTop: 2,
+  },
+  entriesTableCard: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#E2E8F0',
+    borderWidth: 1,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 14,
+  },
+  tableHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  tableColHeader: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  tableDataRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 5,
+  },
+  tableCell: {
+    fontSize: 12,
+    color: BrandColors.textLight,
+  },
+  tableTotalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  tableTotalLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#475569',
+  },
+  tableTotalValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: BrandColors.primaryDark,
   },
 });

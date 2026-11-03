@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * Verification Script: Add Customer Form Keyboard Handling & Backdated Milk Billing Calculation
  *
@@ -31,8 +32,11 @@ import {
   query,
   where,
 } from 'firebase/firestore';
-const fs = typeof require !== 'undefined' ? (require('fs') as any) : null;
-const path = typeof require !== 'undefined' ? (require('path') as any) : null;
+// @ts-nocheck
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const fs = require('fs');
+const path = require('path');
 
 const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || 'AIzaSyBJGRAY93E3PGIA8KTTVMi2f2UCCWLZlwM',
@@ -92,12 +96,12 @@ async function runVerification() {
   // =========================================================================
   console.log('\n--- Checking Task 2: Backdated Customer Registration & Historical Billing ---');
 
-  const { addCustomer, deleteCustomer } = await import('../src/services/customerService');
-  const { getCustomerDeliveries, getDeliveryDocId } = await import('../src/services/deliveryService');
-  const { getBillForCustomer } = await import('../src/services/billingService');
+  const { addCustomer, deleteCustomer } = await import('../src/services/customerService.ts');
+  const { getCustomerDeliveries, getDeliveryDocId } = await import('../src/services/deliveryService.ts');
+  const { getBillForCustomer } = await import('../src/services/billingService.ts');
 
   // Clean up any previous test customers first
-  const { getCustomers } = await import('../src/services/customerService');
+  const { getCustomers } = await import('../src/services/customerService.ts');
   const existingCusts = await getCustomers();
   for (const c of existingCusts) {
     if (c.phone === '9876500001' || c.phone === '9876500002') {

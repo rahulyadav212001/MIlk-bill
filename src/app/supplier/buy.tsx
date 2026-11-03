@@ -81,25 +81,36 @@ export default function BuyScreen() {
   const [savingBuy, setSavingBuy] = useState(false);
   const [buyError, setBuyError] = useState('');
   const [buySuccess, setBuySuccess] = useState('');
-  const [isRateFocused, setIsRateFocused] = useState(false);
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
   const buyScrollViewRef = useRef<any>(null);
 
-  // Auto-scroll to ensure focused input is visible above keyboard
+  // Auto-scroll to ensure focused input and Save Purchase button are visible above keyboard
   useEffect(() => {
-    const keyboardShowSub = Keyboard.addListener(
-      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
-      () => {
-        if (isRateFocused) {
-          setTimeout(() => {
-            buyScrollViewRef.current?.scrollToEnd({ animated: true });
-          }, 50);
-        }
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const keyboardShowSub = Keyboard.addListener(showEvent, (e) => {
+      setIsKeyboardVisible(true);
+      const h = e.endCoordinates?.height || 0;
+      setKeyboardHeight(h);
+      if (buyModalVisible) {
+        setTimeout(() => {
+          buyScrollViewRef.current?.scrollToEnd({ animated: true });
+        }, 100);
       }
-    );
+    });
+
+    const keyboardHideSub = Keyboard.addListener(hideEvent, () => {
+      setIsKeyboardVisible(false);
+      setKeyboardHeight(0);
+    });
+
     return () => {
       keyboardShowSub.remove();
+      keyboardHideSub.remove();
     };
-  }, [isRateFocused]);
+  }, [buyModalVisible]);
 
   // Edit Supplier Modal State
   const [editSupplierModalVisible, setEditSupplierModalVisible] = useState(false);
@@ -167,6 +178,7 @@ export default function BuyScreen() {
 
   // Open Buy modal for a specific supplier
   const handleOpenBuy = (supplier: Supplier) => {
+    Keyboard.dismiss();
     setBuyTargetSupplier(supplier);
     setBuyDate(selectedDate);
     setBuyMilkCategory('buffalo');
@@ -175,12 +187,12 @@ export default function BuyScreen() {
     setBuyPriceStr('');
     setBuyError('');
     setBuySuccess('');
-    setIsRateFocused(false);
     setBuyModalVisible(true);
   };
 
   // Save new milk purchase
   const handleSaveBuy = async () => {
+    Keyboard.dismiss();
     if (!buyTargetSupplier) return;
 
     const qty = parseFloat(buyQuantityStr.trim());
@@ -653,20 +665,36 @@ export default function BuyScreen() {
         <Modal
           visible={buyModalVisible}
           onDismiss={() => {
-            setIsRateFocused(false);
+            Keyboard.dismiss();
             setBuyModalVisible(false);
           }}
-          contentContainerStyle={[styles.modalContent, styles.buyModalContainer]}
+          contentContainerStyle={[
+            styles.modalContent,
+            styles.buyModalContainer,
+            isKeyboardVisible && {
+              maxHeight: '94%',
+              marginVertical: 4,
+              marginBottom: Platform.OS === 'android' ? 10 : 20,
+            },
+          ]}
         >
           <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
             style={styles.keyboardAvoidingView}
           >
             <ScrollView
               ref={buyScrollViewRef}
               keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
-              contentContainerStyle={styles.buyScrollContent}
+              contentContainerStyle={[
+                styles.buyScrollContent,
+                {
+                  paddingBottom: isKeyboardVisible
+                    ? Math.max(keyboardHeight > 0 ? keyboardHeight - 40 : 200, 200)
+                    : 28,
+                },
+              ]}
             >
               <View style={styles.modalHeaderRow}>
                 <View style={{ flex: 1 }}>
@@ -679,7 +707,6 @@ export default function BuyScreen() {
                   icon="close"
                   size={20}
                   onPress={() => {
-                    setIsRateFocused(false);
                     setBuyModalVisible(false);
                   }}
                   accessibilityLabel="Close Milk Purchase"
@@ -777,10 +804,9 @@ export default function BuyScreen() {
                   setBuyError('');
                 }}
                 onFocus={() => {
-                  setIsRateFocused(false);
                   setTimeout(() => {
-                    buyScrollViewRef.current?.scrollTo({ y: 220, animated: true });
-                  }, 150);
+                    buyScrollViewRef.current?.scrollToEnd({ animated: true });
+                  }, 120);
                 }}
                 mode="outlined"
                 keyboardType="decimal-pad"
@@ -799,13 +825,9 @@ export default function BuyScreen() {
                   setBuyError('');
                 }}
                 onFocus={() => {
-                  setIsRateFocused(true);
                   setTimeout(() => {
                     buyScrollViewRef.current?.scrollToEnd({ animated: true });
-                  }, 150);
-                }}
-                onBlur={() => {
-                  setIsRateFocused(false);
+                  }, 120);
                 }}
                 mode="outlined"
                 keyboardType="decimal-pad"
@@ -828,7 +850,6 @@ export default function BuyScreen() {
                 <Button
                   mode="text"
                   onPress={() => {
-                    setIsRateFocused(false);
                     setBuyModalVisible(false);
                   }}
                   disabled={savingBuy}

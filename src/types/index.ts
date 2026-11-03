@@ -205,8 +205,48 @@ export interface Customer {
   deliveryStartDate: string; // YYYY-MM-DD
   deliveryStopDate?: string | null; // YYYY-MM-DD (optional, inclusive)
   isActive: boolean;
+  isDeactivated?: boolean;
+  deactivatedAt?: number;
+  closingDate?: string; // YYYY-MM-DD
+  billingPeriodStart?: string; // YYYY-MM-DD
+  billingPeriodEnd?: string; // YYYY-MM-DD
+  finalBillAmount?: number;
+  finalOutstandingAmount?: number;
+  accountStatus?: 'active' | 'deactivated';
   createdAt: number;
   updatedAt: number;
+}
+
+export interface FinalAccountClosingSummary {
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  joiningDate: string; // YYYY-MM-DD
+  closingDate: string; // YYYY-MM-DD
+  billingPeriodStart: string; // YYYY-MM-DD (start of current cycle)
+  billingPeriodEnd: string; // YYYY-MM-DD (closing date)
+  billingPeriodLabel: string; // e.g. "1 Nov 2026 to 5 Nov 2026"
+  billingMonth: number; // 1-12
+  billingYear: number;
+  completedBillingMonthsCount: number;
+  lastCompletedMonthLabel?: string;
+  isPreviousMonthPaid: boolean;
+  milkCategory: MilkCategory;
+  defaultDailyQuantity: number;
+  pricePerLiter: number;
+  currentCycleMilkQuantity: number; // Litres in this cycle
+  currentCycleMilkAmount: number; // ₹ milk charges in this cycle
+  currentCycleDeliveries: Delivery[]; // actual daily milk entries in this cycle
+  previousBalance: number; // unpaid balance carried from prior completed bills
+  currentMonthPayments: number; // payments received in this cycle
+  finalBillAmount: number; // current cycle milk charges (₹)
+  finalOutstandingAmount: number; // previousBalance + finalBillAmount - currentMonthPayments
+  deliveriesCount: number;
+  totalMilkQuantity?: number;
+  totalMilkAmount?: number;
+  currentMilkBill?: number;
+  currentMilkQuantity?: number;
+  totalPaymentsReceived?: number;
 }
 
 export interface Delivery {
@@ -274,6 +314,8 @@ export interface CustomerRangeAccountsHistory {
   dateSummaries: CustomerDateSummary[];
 }
 
+export type PaymentStatus = 'paid' | 'partially_paid' | 'due';
+
 export interface MonthlyBill {
   id: string; // stable: bill_{customerId}_{year}_{month}
   customerId: string;
@@ -288,6 +330,10 @@ export interface MonthlyBill {
   previousBalance: number;
   paymentsReceived: number;
   remainingBalance: number; // previousBalance + milkAmount - paymentsReceived
+  paymentStatus?: PaymentStatus;
+  expectedPaymentDate?: string;
+  notes?: string;
+  lastPaymentDate?: string;
   generatedAt: number;
   updatedAt: number;
 }
@@ -295,13 +341,44 @@ export interface MonthlyBill {
 export interface Payment {
   id: string;
   customerId: string;
+  billId?: string;
   amount: number;
   paymentDate: string; // YYYY-MM-DD
   paymentMethod: PaymentMethod;
   billingMonth: number;
   billingYear: number;
+  expectedPaymentDate?: string;
+  paymentStatus?: PaymentStatus;
   note?: string;
+  notes?: string;
   createdAt: number;
+  updatedAt?: number;
+}
+
+export interface CustomerPaymentSummary {
+  customer: Customer;
+  bill: MonthlyBill;
+  milkAmount: number;
+  previousBalance: number;
+  totalDue: number; // previousBalance + milkAmount
+  paidAmount: number; // paymentsReceived
+  remainingBalance: number;
+  paymentStatus: PaymentStatus;
+  expectedPaymentDate?: string;
+  lastPaymentDate?: string;
+  isDeactivated: boolean;
+}
+
+export interface PaymentDashboardOverview {
+  month: number;
+  year: number;
+  totalMonthlyBills: number;
+  totalAmountReceived: number;
+  totalOutstandingAmount: number;
+  paidCustomersCount: number;
+  dueCustomersCount: number;
+  partiallyPaidCustomersCount: number;
+  totalCustomersCount: number;
 }
 
 export interface SupplierProfile {

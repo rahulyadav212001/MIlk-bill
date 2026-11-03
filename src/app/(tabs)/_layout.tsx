@@ -64,6 +64,15 @@ export default function TabLayout() {
           ),
         }}
       />
+      <Tabs.Screen
+        name="payments"
+        options={{
+          title: 'Payments',
+          tabBarIcon: ({ color, size }) => (
+            <MaterialCommunityIcons name="cash-multiple" size={size} color={color as any} />
+          ),
+        }}
+      />
     </Tabs>
   );
 }
